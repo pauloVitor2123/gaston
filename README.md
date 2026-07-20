@@ -206,6 +206,10 @@ Projeto em fase de design técnico, pré-implementação. Decisões em aberto qu
 - [ ] Avaliar Turso como alternativa a D1 apenas se "um banco por usuário" virar prioridade.
 - [ ] Validar qualidade de extração em português ao trocar para GPT-4o-mini (fase 2 do plano de créditos).
 
+## Documentação completa
+
+Este README resume o projeto. Os documentos originais (pitch, pesquisa de mercado, design técnico detalhado, decisões técnicas consolidadas, roadmap de monetização) estão em [`docs/`](./docs).
+
 ---
 
 Projeto pessoal de [Paulo Vitor](mailto:paulovitor2123@gmail.com).

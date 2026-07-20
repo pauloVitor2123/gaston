@@ -130,3 +130,7 @@ Monetizable features: category personalization, due-date reminders, fixed vs. va
 | Early traction: ~500 | current | D1 still sufficient |
 | Growth: 1K–10K | Workers paid tier, D1 may need Postgres migration for features/size | monitor D1 growth |
 | SaaS 10K+: | Postgres (Neon/Supabase) + sharding or RLS | reassess WhatsApp, Turso alternatives |
+
+## Full context docs
+
+This file is the condensed summary. Full source documents (product pitch, market research, detailed technical design, consolidated tech decisions log, monetization roadmap) live in [`docs/`](./docs) — read them when you need reasoning/trade-offs beyond what's summarized here.
