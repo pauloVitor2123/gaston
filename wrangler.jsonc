@@ -4,7 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
-  "account_id": "4c21424071b97ed13cfb0867675e37f2",
+  // account_id omitido de propósito (repo público). Resolve via login local (conta única)
+  // e via CLOUDFLARE_ACCOUNT_ID no ambiente do Workers Builds.
 
   "observability": {
     "enabled": true,

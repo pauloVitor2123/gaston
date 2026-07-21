@@ -20,7 +20,7 @@ jobs:
         run: npm ci
 
       - name: Generate Worker types
-        run: npx wrangler types
+        run: npm run cf-typegen
 
       - name: Typecheck
         run: npm run typecheck

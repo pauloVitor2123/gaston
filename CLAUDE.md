@@ -108,7 +108,7 @@ Persist + 1-line confirmation
 - **Code language**: English (snake_case, clear intent). UI strings only in Portuguese.
 - **Database access**: **Drizzle ORM** (decided). `src/db/schema.ts` is the single source of truth; `drizzle-kit generate` produces migrations; seeds live in `src/db/seeds.sql` (applied via `wrangler d1 execute --file`).
 - **Pending conversation state**: **`expires_at` on read** (decided) — no Cron cleanup.
-- **LLM stack**: single `OpenAICompatibleClient` (covers OpenRouter + OpenAI). Model IDs in `wrangler.toml [vars]`; API keys via `wrangler secret put` (never in git/GitHub). Per-function fallback chains: LLM1 `llama-3.1-8b:free` → `gpt-4o-mini` (OpenAI); LLM2 `claude-sonnet-4` → `gpt-4o-mini`. `CreditsExhaustedError` when all fail.
+- **LLM stack**: single `OpenAICompatibleClient` (covers OpenRouter + OpenAI). Model IDs in `wrangler.jsonc` `vars`; API keys via `wrangler secret put` (never in git/GitHub). Per-function fallback chains: LLM1 `llama-3.1-8b:free` → `gpt-4o-mini` (OpenAI); LLM2 `claude-sonnet-4` → `gpt-4o-mini`. `CreditsExhaustedError` when all fail.
 - **Architecture**: constructor injection; specific repositories (service coordinates multi-repo); tests colocated (`x.ts` + `x.test.ts`).
 - **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
 - **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`
