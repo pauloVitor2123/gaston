@@ -1,4 +1,4 @@
-import type { Card, NewCard, NewUser, User } from "../db/schema";
+import type { Card, NewCard, NewUser, User } from "@/db/schema";
 
 // Interfaces dos repositórios (constructor injection nos services).
 // Abstração sobre o acesso a dados: services dependem destas interfaces, não do Drizzle.
