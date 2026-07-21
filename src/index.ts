@@ -1,9 +1,3 @@
-/**
- * Gaston — assistente financeiro conversacional (Telegram + Cloudflare Workers).
- *
- * Fase 0: scaffold "hello world" só pra validar deploy + pipeline.
- * O webhook do Telegram e o pipeline de LLM entram nas fases seguintes.
- */
 export default {
   async fetch(request: Request, _env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);

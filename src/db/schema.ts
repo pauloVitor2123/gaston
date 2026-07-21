@@ -1,21 +1,6 @@
 import { sql } from "drizzle-orm";
 import { check, integer, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 
-/**
- * Schema Drizzle — FONTE DA VERDADE do banco.
- * drizzle-kit gera as migrations SQL a partir daqui; nunca se escreve DDL à mão.
- *
- * Tradução Postgres (design-tecnico-v2.1) → SQLite/D1:
- *   BIGSERIAL PK  → integer autoincrement
- *   TEXT[]        → text JSON (SQLite não tem array nativo)
- *   NUMERIC       → real
- *   BOOLEAN       → integer (mode boolean)
- *   TIMESTAMPTZ   → integer (mode timestamp, unixepoch)
- *
- * Escopo deste PR: tabelas de config (users, cards, categories, mantras).
- * Tabelas transacionais entram nos PRs das features que as usam.
- */
-
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   telegramChatId: integer("telegram_chat_id").notNull().unique(),
@@ -33,15 +18,15 @@ export const cards = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id),
-    name: text("name").notNull(), // "Nubank PF", "Nubank PJ"
+    name: text("name").notNull(),
     aliases: text("aliases", { mode: "json" })
       .$type<string[]>()
       .notNull()
-      .default(sql`'[]'`), // ["nubank","nu","roxinho"] p/ matching do LLM
-    brand: text("brand"), // "Mastercard", "Visa"
-    closingDay: integer("closing_day").notNull(), // 31 = "último dia do mês"
+      .default(sql`'[]'`),
+    brand: text("brand"),
+    closingDay: integer("closing_day").notNull(),
     dueDay: integer("due_day").notNull(),
-    limitCents: integer("limit_cents"), // nullable
+    limitCents: integer("limit_cents"),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
@@ -61,11 +46,11 @@ export const categories = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id),
-    name: text("name").notNull(), // dado do usuário, fica em PT
+    name: text("name").notNull(),
     synonyms: text("synonyms", { mode: "json" })
       .$type<string[]>()
       .notNull()
-      .default(sql`'[]'`), // ["almoço","lanche"] → mata deriva de categoria
+      .default(sql`'[]'`),
   },
   (t) => ({ userNameUnique: unique().on(t.userId, t.name) }),
 );
@@ -77,13 +62,12 @@ export const mantras = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id),
-    name: text("name").notNull(), // "Se Pagar", "Doar", "Pagas as Contas"...
-    targetPercent: real("target_percent").notNull(), // 0.45, 0.30, 0.10...
+    name: text("name").notNull(),
+    targetPercent: real("target_percent").notNull(),
   },
   (t) => ({ userNameUnique: unique().on(t.userId, t.name) }),
 );
 
-// Tipos inferidos do schema (a fonte da verdade também tipa o código).
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Card = typeof cards.$inferSelect;

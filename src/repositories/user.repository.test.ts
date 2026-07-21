@@ -13,7 +13,7 @@ describe("UserRepository", () => {
     expect(user.id).toBeGreaterThan(0);
     expect(user.telegramChatId).toBe(12345);
     expect(user.name).toBe("Fulano");
-    expect(user.timezone).toBe("America/Sao_Paulo"); // default do schema
+    expect(user.timezone).toBe("America/Sao_Paulo");
   });
 
   it("findByChatId retorna o usuário existente", async () => {

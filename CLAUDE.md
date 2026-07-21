@@ -115,6 +115,7 @@ Persist + 1-line confirmation
 
 ## Coding Conventions (code-review enforces these)
 
+- **No explanatory comments**: code must be self-documenting; do not add comments that describe what/why the code does. Clear names over comments. Only actionable markers (e.g. `TODO`) when the info isn't derivable from code.
 - **Path aliases**: use `@/...` (configured via tsconfig `paths`) instead of deep relative imports (`../../`). Refactor `../` imports when touching a file.
 - **Schema files**: keep the Drizzle schema split into small per-domain files as it grows (e.g. `src/db/schema/users.ts`, `cards.ts`, `transactions.ts`) re-exported from an index — never one giant `schema.ts`.
 

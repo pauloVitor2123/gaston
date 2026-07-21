@@ -1,5 +1,3 @@
-// Erros da camada de LLM. O LLMProvider (orquestrador) usa o tipo pra decidir o fallback.
-
 export class LLMError extends Error {
   constructor(
     message: string,
@@ -11,11 +9,6 @@ export class LLMError extends Error {
   }
 }
 
-/**
- * Créditos/limite esgotados neste provider (HTTP 402/429).
- * Sinaliza ao orquestrador que deve tentar o próximo client da cadeia;
- * se todos falharem assim, o erro é propagado ao usuário.
- */
 export class CreditsExhaustedError extends LLMError {
   constructor(message: string, status?: number, endpoint?: string) {
     super(message, status, endpoint);
