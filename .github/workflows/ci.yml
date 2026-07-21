@@ -1,0 +1,29 @@
+name: CI
+
+# Roda em cada PR (quality gate). Sem secrets — testes usam mocks / D1 local (miniflare).
+# Deploy NÃO é feito aqui: fica a cargo do Cloudflare Workers Builds (push na main).
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate Worker types
+        run: npx wrangler types
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
