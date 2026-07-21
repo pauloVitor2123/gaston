@@ -10,11 +10,6 @@ interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string } }>;
 }
 
-/**
- * Client único para APIs compatíveis com OpenAI (OpenRouter e OpenAI).
- * A diferença entre providers é só URL + apiKey (config injetada).
- * `fetch` é injetado pra testabilidade (default: global fetch do Worker).
- */
 export class OpenAICompatibleClient implements ILLMClient {
   constructor(
     private readonly config: LLMClientConfig,

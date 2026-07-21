@@ -3,10 +3,6 @@ import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-worker
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
-// API do vitest-pool-workers v0.13+ (vitest 4): plugin cloudflareTest().
-// tsconfigPaths() resolve os aliases @/ (tsconfig paths) nos testes.
-// Lê as migrations geradas pelo drizzle-kit e as expõe como binding TEST_MIGRATIONS,
-// aplicado no D1 de teste pelo setup file (test/apply-migrations.ts).
 export default defineConfig({
   plugins: [
     tsconfigPaths(),

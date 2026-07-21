@@ -1,10 +1,11 @@
+import { LLM_ENDPOINTS } from "@/config";
 import type { LLMClientConfig } from "@/types/llm";
 import { describe, expect, it, vi } from "vitest";
 import { CreditsExhaustedError, LLMError } from "./errors";
 import { OpenAICompatibleClient } from "./openai-compatible-client";
 
 const config: LLMClientConfig = {
-  url: "https://openrouter.ai/api/v1",
+  url: LLM_ENDPOINTS.openrouter,
   apiKey: "test-key",
   model: "test-model",
 };
