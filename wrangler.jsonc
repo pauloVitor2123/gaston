@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gaston",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // account_id omitido de propósito (repo público). Resolve via login local (conta única)
+  // e via CLOUDFLARE_ACCOUNT_ID no ambiente do Workers Builds.
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // D1 — SQLite edge-native. Binding acessível no Worker via env.DB
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gaston-db",
+      "database_id": "1b879dd5-240f-41c5-949e-0bf1d1971335",
+      "migrations_dir": "./drizzle"
+    }
+  ],
+
+  // Config NÃO-secreta (versionada). Model IDs — trocar aqui não exige mudar código.
+  // Chaves de API vão via `wrangler secret put` (nunca aqui).
+  "vars": {
+    "LLM1_MODEL": "meta-llama/llama-3.1-8b-instruct:free",
+    "LLM2_MODEL": "anthropic/claude-sonnet-4",
+    "FALLBACK_MODEL": "gpt-4o-mini"
+  }
+}

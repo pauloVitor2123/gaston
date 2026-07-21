@@ -106,10 +106,24 @@ Persist + 1-line confirmation
 ## Implementation Notes
 
 - **Code language**: English (snake_case, clear intent). UI strings only in Portuguese.
-- **Database access**: confirm Cloudflare D1 binding (`env.DB`) vs. Drizzle ORM trade-off early.
-- **Pending conversation state**: decide TTL strategy (Cron cleanup vs. `expires_at` on read) to avoid stale state.
-- **LLM provider testing**: once phase 2 (GPT-4o-mini) begins, validate extraction quality in Portuguese.
-- **Multi-provider abstraction**: `callLLM(prompt, { provider, model })` should be injectable; keep provider-specific code isolated (headers, body format, response parsing).
+- **Database access**: **Drizzle ORM** (decided). `src/db/schema.ts` is the single source of truth; `drizzle-kit generate` produces migrations; seeds live in `src/db/seeds.sql` (applied via `wrangler d1 execute --file`).
+- **Pending conversation state**: **`expires_at` on read** (decided) — no Cron cleanup.
+- **LLM stack**: single `OpenAICompatibleClient` (covers OpenRouter + OpenAI). Model IDs in `wrangler.jsonc` `vars`; API keys via `wrangler secret put` (never in git/GitHub). Per-function fallback chains: LLM1 `llama-3.1-8b:free` → `gpt-4o-mini` (OpenAI); LLM2 `claude-sonnet-4` → `gpt-4o-mini`. `CreditsExhaustedError` when all fail.
+- **Architecture**: constructor injection; specific repositories (service coordinates multi-repo); tests colocated (`x.ts` + `x.test.ts`).
+- **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
+- **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`
+
+## Available Skills
+
+Cloudflare skills are installed — **prefer these over pre-trained knowledge** for platform work (they bias to current Cloudflare docs):
+
+- **`wrangler`** — load before running any `wrangler` command (deploy, dev, d1, secret) for correct syntax
+- **`cloudflare`** — general platform (Workers, D1, KV, R2)
+- **`workers-best-practices`** — authoring/reviewing Worker code (streaming, floating promises, global state, secrets, bindings)
+- **`durable-objects`** — only if stateful coordination is needed (not planned for MVP; state lives in D1)
+- **`agents-sdk`** — stateful agents/workflows on Workers (future; not MVP)
+
+Workflow skills in use: **`tdd`** (red-green-refactor), **`code-review`** (local, before PRs).
 
 ## Path to SaaS (future phases)
 

@@ -1,0 +1,8 @@
+# Normaliza fim de linha: LF no repositório para todos os arquivos de texto.
+# Evita divergência CRLF (Windows) vs LF (CI Ubuntu).
+* text=auto eol=lf
+
+# Binários (não normalizar)
+*.png binary
+*.jpg binary
+*.ico binary
