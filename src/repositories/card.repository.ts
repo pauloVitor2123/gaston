@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { type Card, cards, type NewCard } from "../db/schema";
-import type { ICardRepository } from "../types/repository";
+import { type Card, cards, type NewCard } from "@/db/schema";
+import type { ICardRepository } from "@/types/repository";
 
 export class CardRepository implements ICardRepository {
   constructor(private readonly db: DrizzleD1Database) {}

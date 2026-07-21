@@ -3,6 +3,8 @@
     "target": "es2022",
     "module": "es2022",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
     "lib": ["es2022"],
     "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-pool-workers/types"],
     "strict": true,

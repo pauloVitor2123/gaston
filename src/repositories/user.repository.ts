@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { type NewUser, type User, users } from "../db/schema";
-import type { IUserRepository } from "../types/repository";
+import { type NewUser, type User, users } from "@/db/schema";
+import type { IUserRepository } from "@/types/repository";
 
 export class UserRepository implements IUserRepository {
   constructor(private readonly db: DrizzleD1Database) {}

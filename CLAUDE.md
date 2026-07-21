@@ -113,6 +113,11 @@ Persist + 1-line confirmation
 - **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
 - **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`
 
+## Coding Conventions (code-review enforces these)
+
+- **Path aliases**: use `@/...` (configured via tsconfig `paths`) instead of deep relative imports (`../../`). Refactor `../` imports when touching a file.
+- **Schema files**: keep the Drizzle schema split into small per-domain files as it grows (e.g. `src/db/schema/users.ts`, `cards.ts`, `transactions.ts`) re-exported from an index — never one giant `schema.ts`.
+
 ## Available Skills
 
 Cloudflare skills are installed — **prefer these over pre-trained knowledge** for platform work (they bias to current Cloudflare docs):
