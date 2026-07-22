@@ -9,3 +9,13 @@ export interface LLMClientConfig {
   referer?: string;
   title?: string;
 }
+
+export interface LLMAttemptLog {
+  latencyMs: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface IMetricsService {
+  logAttempt(entry: LLMAttemptLog): void | Promise<void>;
+}

@@ -1,8 +1,11 @@
-import type { ILLMClient } from "@/types/llm";
+import type { ILLMClient, IMetricsService } from "@/types/llm";
 import { CreditsExhaustedError, LLMError } from "./errors";
 
 export class LLMProvider implements ILLMClient {
-  constructor(private readonly clients: ILLMClient[]) {
+  constructor(
+    private readonly clients: ILLMClient[],
+    private readonly metrics: IMetricsService,
+  ) {
     if (clients.length === 0) {
       throw new Error("LLMProvider requer ao menos um client");
     }
@@ -12,9 +15,17 @@ export class LLMProvider implements ILLMClient {
     const errors: unknown[] = [];
 
     for (const client of this.clients) {
+      const start = Date.now();
       try {
-        return await client.call(userPrompt, systemPrompt);
+        const result = await client.call(userPrompt, systemPrompt);
+        await this.metrics.logAttempt({ latencyMs: Date.now() - start, success: true });
+        return result;
       } catch (error) {
+        await this.metrics.logAttempt({
+          latencyMs: Date.now() - start,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
         errors.push(error);
       }
     }
