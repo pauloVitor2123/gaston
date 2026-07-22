@@ -13,45 +13,45 @@ const fail = (error: Error) => ({
 });
 
 describe("LLMProvider", () => {
-  it("retorna do primeiro client quando sucede, sem chamar os outros", async () => {
-    const first = ok("primeiro");
-    const second = ok("segundo");
+  it("returns from first client on success, without calling the others", async () => {
+    const first = ok("first");
+    const second = ok("second");
     const provider = new LLMProvider([first, second], noopMetrics);
 
-    expect(await provider.call("oi")).toBe("primeiro");
+    expect(await provider.call("hi")).toBe("first");
     expect(first.call).toHaveBeenCalledOnce();
     expect(second.call).not.toHaveBeenCalled();
   });
 
-  it("cai pro próximo client quando o anterior falha", async () => {
+  it("falls back to next client when previous one fails", async () => {
     const provider = new LLMProvider([fail(new CreditsExhaustedError("429")), ok("fallback")], noopMetrics);
-    expect(await provider.call("oi", "sys")).toBe("fallback");
+    expect(await provider.call("hi", "sys")).toBe("fallback");
   });
 
-  it("todos falham por créditos → CreditsExhaustedError", async () => {
+  it("all fail with credits exhausted → CreditsExhaustedError", async () => {
     const provider = new LLMProvider(
       [fail(new CreditsExhaustedError("a")), fail(new CreditsExhaustedError("b"))],
       noopMetrics,
     );
-    await expect(provider.call("oi")).rejects.toBeInstanceOf(CreditsExhaustedError);
+    await expect(provider.call("hi")).rejects.toBeInstanceOf(CreditsExhaustedError);
   });
 
-  it("falhas não relacionadas a créditos → LLMError, não CreditsExhaustedError", async () => {
+  it("non-credits failures → LLMError, not CreditsExhaustedError", async () => {
     const provider = new LLMProvider([fail(new LLMError("500", 500))], noopMetrics);
-    const err = await provider.call("oi").catch((e: unknown) => e);
+    const err = await provider.call("hi").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LLMError);
     expect(err).not.toBeInstanceOf(CreditsExhaustedError);
   });
 
-  it("sem clients → construtor lança", () => {
+  it("no clients → constructor throws", () => {
     expect(() => new LLMProvider([], noopMetrics)).toThrow();
   });
 
-  it("registra log para cada tentativa via MetricsService", async () => {
+  it("logs each attempt via MetricsService", async () => {
     const logAttempt = vi.fn();
-    const provider = new LLMProvider([fail(new CreditsExhaustedError("erro")), ok("ok")], { logAttempt });
+    const provider = new LLMProvider([fail(new CreditsExhaustedError("err")), ok("ok")], { logAttempt });
 
-    await provider.call("oi");
+    await provider.call("hi");
 
     expect(logAttempt).toHaveBeenCalledTimes(2);
     expect(logAttempt).toHaveBeenCalledWith(expect.objectContaining({ success: false }));

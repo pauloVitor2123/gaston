@@ -20,26 +20,26 @@ async function setupUserWithCards(chatId: number) {
 }
 
 describe("CardRepository", () => {
-  it("create + listByUser retorna os cartões do usuário", async () => {
+  it("create + listByUser returns the user's cards", async () => {
     const { cards, userId } = await setupUserWithCards(1001);
     const list = await cards.listByUser(userId);
     expect(list).toHaveLength(2);
     expect(list.map((c) => c.name).sort()).toEqual(["Itaú", "Nubank PF"]);
   });
 
-  it("findByNameOrAlias acha por nome (case-insensitive)", async () => {
+  it("findByNameOrAlias finds by name (case-insensitive)", async () => {
     const { cards, userId } = await setupUserWithCards(1002);
     const card = await cards.findByNameOrAlias(userId, "nubank pf");
     expect(card?.name).toBe("Nubank PF");
   });
 
-  it("findByNameOrAlias acha por alias", async () => {
+  it("findByNameOrAlias finds by alias", async () => {
     const { cards, userId } = await setupUserWithCards(1003);
     const card = await cards.findByNameOrAlias(userId, "roxinho");
     expect(card?.name).toBe("Nubank PF");
   });
 
-  it("findByNameOrAlias retorna null quando não acha", async () => {
+  it("findByNameOrAlias returns null when not found", async () => {
     const { cards, userId } = await setupUserWithCards(1004);
     expect(await cards.findByNameOrAlias(userId, "inexistente")).toBeNull();
   });

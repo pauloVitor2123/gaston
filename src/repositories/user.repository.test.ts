@@ -6,7 +6,7 @@ import { UserRepository } from "./user.repository";
 const makeRepo = () => new UserRepository(drizzle(env.DB));
 
 describe("UserRepository", () => {
-  it("create insere e retorna o usuário (com defaults)", async () => {
+  it("create inserts and returns the user (with defaults)", async () => {
     const repo = makeRepo();
     const user = await repo.create({ telegramChatId: 12345, name: "Fulano" });
 
@@ -16,7 +16,7 @@ describe("UserRepository", () => {
     expect(user.timezone).toBe("America/Sao_Paulo");
   });
 
-  it("findByChatId retorna o usuário existente", async () => {
+  it("findByChatId returns existing user", async () => {
     const repo = makeRepo();
     await repo.create({ telegramChatId: 999, name: "Beltrano" });
 
@@ -24,7 +24,7 @@ describe("UserRepository", () => {
     expect(found?.name).toBe("Beltrano");
   });
 
-  it("findByChatId retorna null quando não existe", async () => {
+  it("findByChatId returns null when not found", async () => {
     const repo = makeRepo();
     expect(await repo.findByChatId(424242)).toBeNull();
   });

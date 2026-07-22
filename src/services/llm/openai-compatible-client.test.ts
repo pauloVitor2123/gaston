@@ -16,7 +16,7 @@ const respondWith = (status: number, body: string) =>
 const okBody = JSON.stringify({ choices: [{ message: { content: "olá" } }] });
 
 describe("OpenAICompatibleClient", () => {
-  it("monta a requisição no formato OpenAI e retorna o conteúdo", async () => {
+  it("builds the request in OpenAI format and returns the content", async () => {
     const fetchFn = respondWith(200, okBody);
     const client = new OpenAICompatibleClient(config, fetchFn);
 
@@ -37,7 +37,7 @@ describe("OpenAICompatibleClient", () => {
     ]);
   });
 
-  it("sem systemPrompt envia só a mensagem do usuário", async () => {
+  it("without systemPrompt sends only the user message", async () => {
     const fetchFn = respondWith(200, okBody);
     const client = new OpenAICompatibleClient(config, fetchFn);
 
@@ -47,24 +47,24 @@ describe("OpenAICompatibleClient", () => {
     expect(body.messages).toEqual([{ role: "user", content: "oi" }]);
   });
 
-  it("429 lança CreditsExhaustedError", async () => {
+  it("429 throws CreditsExhaustedError", async () => {
     const client = new OpenAICompatibleClient(config, respondWith(429, "rate limited"));
     await expect(client.call("oi")).rejects.toBeInstanceOf(CreditsExhaustedError);
   });
 
-  it("402 lança CreditsExhaustedError", async () => {
+  it("402 throws CreditsExhaustedError", async () => {
     const client = new OpenAICompatibleClient(config, respondWith(402, "no credits"));
     await expect(client.call("oi")).rejects.toBeInstanceOf(CreditsExhaustedError);
   });
 
-  it("500 lança LLMError (não CreditsExhaustedError)", async () => {
+  it("500 throws LLMError (not CreditsExhaustedError)", async () => {
     const client = new OpenAICompatibleClient(config, respondWith(500, "boom"));
     const err = await client.call("oi").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LLMError);
     expect(err).not.toBeInstanceOf(CreditsExhaustedError);
   });
 
-  it("resposta 200 sem conteúdo lança LLMError", async () => {
+  it("200 response without content throws LLMError", async () => {
     const client = new OpenAICompatibleClient(config, respondWith(200, JSON.stringify({ choices: [] })));
     await expect(client.call("oi")).rejects.toBeInstanceOf(LLMError);
   });
