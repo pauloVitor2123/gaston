@@ -10,7 +10,7 @@ const env: LLMEnv = {
 };
 
 describe("buildLLMConfigs", () => {
-  it("llm1 e llm2 usam OpenRouter; fallback usa OpenAI", () => {
+  it("llm1 and llm2 use OpenRouter; fallback uses OpenAI", () => {
     const configs = buildLLMConfigs(env);
 
     expect(configs.llm1).toEqual({ url: LLM_ENDPOINTS.openrouter, apiKey: "or-key", model: "llm1" });

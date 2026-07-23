@@ -40,13 +40,13 @@ export class OpenAICompatibleClient implements ILLMClient {
       const detail = await res.text();
       if (res.status === 402 || res.status === 429) {
         throw new CreditsExhaustedError(
-          `Créditos/limite esgotados (${res.status}) no modelo ${this.config.model}: ${detail}`,
+          `Credits/limit exhausted (${res.status}) for model ${this.config.model}: ${detail}`,
           res.status,
           this.config.url,
         );
       }
       throw new LLMError(
-        `Falha na chamada LLM (${res.status}) no modelo ${this.config.model}: ${detail}`,
+        `LLM call failed (${res.status}) for model ${this.config.model}: ${detail}`,
         res.status,
         this.config.url,
       );
@@ -56,7 +56,7 @@ export class OpenAICompatibleClient implements ILLMClient {
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       throw new LLMError(
-        `Resposta sem conteúdo do modelo ${this.config.model}`,
+        `Empty response from model ${this.config.model}`,
         res.status,
         this.config.url,
       );

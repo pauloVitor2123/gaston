@@ -7,7 +7,7 @@ export class LLMProvider implements ILLMClient {
     private readonly metrics: IMetricsService,
   ) {
     if (clients.length === 0) {
-      throw new Error("LLMProvider requer ao menos um client");
+      throw new Error("LLMProvider requires at least one client");
     }
   }
 
@@ -35,8 +35,8 @@ export class LLMProvider implements ILLMClient {
       .join(" | ");
 
     if (errors.every((error) => error instanceof CreditsExhaustedError)) {
-      throw new CreditsExhaustedError(`Créditos esgotados em todos os providers: ${detail}`);
+      throw new CreditsExhaustedError(`Credits exhausted on all providers: ${detail}`);
     }
-    throw new LLMError(`Todos os providers de LLM falharam: ${detail}`);
+    throw new LLMError(`All LLM providers failed: ${detail}`);
   }
 }
