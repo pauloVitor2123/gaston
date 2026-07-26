@@ -154,16 +154,17 @@ describe("TransactionService.persist", () => {
     expect(created.paymentMethod).toBe("cash");
   });
 
-  it("defaults accrualDate to today when result.date is absent", async () => {
+  it("defaults accrualDate to today's UTC midnight when result.date is absent", async () => {
     const { service, repos } = makeService();
     const result: ExtractionResult = { ...baseResult, date: undefined, payment_method: "pix" };
-    const before = Date.now();
     await service.persist(result, userId, "raw");
-    const after = Date.now();
 
+    const now = new Date();
+    const todayUtcMidnight = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
     const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.accrualDate.getTime()).toBeGreaterThanOrEqual(before);
-    expect(created.accrualDate.getTime()).toBeLessThanOrEqual(after);
+    expect(created.accrualDate).toEqual(todayUtcMidnight);
   });
 
   it("stores rawMessage and source=user in the transaction", async () => {

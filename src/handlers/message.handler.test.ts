@@ -193,14 +193,61 @@ describe("MessageHandler.handle", () => {
     expect(reply).toContain("R$ 35,00");
   });
 
-  it("abandons conversation after 3 failed cycles", async () => {
+  it("re-asks and increments cycle when the reply has no parseable amount", async () => {
+    const pending: PendingConversation = {
+      id: 55,
+      userId: 1,
+      stateJson: {
+        partial: { ...fullResult, amount_cents: undefined },
+        missing: "amount_cents",
+        cycles: 0,
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const { handler, transactionService, repos } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(pending),
+    });
+
+    const reply = await handler.handle(100, "sei lá", "Test User");
+
+    expect(transactionService.persist).not.toHaveBeenCalled();
+    expect(repos.pendingRepo.update).toHaveBeenCalledWith(
+      55,
+      expect.objectContaining({ missing: "amount_cents", cycles: 1 }),
+    );
+    expect(reply).toContain("valor");
+  });
+
+  it("still persists a valid reply on the last allowed cycle (no premature abort)", async () => {
+    const pending: PendingConversation = {
+      id: 66,
+      userId: 1,
+      stateJson: {
+        partial: { ...fullResult, amount_cents: undefined },
+        missing: "amount_cents",
+        cycles: 2,
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const { handler, transactionService, repos } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(pending),
+    });
+
+    const reply = await handler.handle(100, "35 reais", "Test User");
+
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(66);
+    expect(transactionService.persist).toHaveBeenCalledOnce();
+    expect(reply).toContain("R$ 35,00");
+  });
+
+  it("abandons conversation when the reply fails on the last allowed cycle", async () => {
     const pending: PendingConversation = {
       id: 88,
       userId: 1,
       stateJson: {
         partial: { ...fullResult, amount_cents: undefined },
         missing: "amount_cents",
-        cycles: 3,
+        cycles: 2,
       },
       expiresAt: new Date(Date.now() + 60_000),
     };

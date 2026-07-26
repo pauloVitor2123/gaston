@@ -9,13 +9,28 @@ import type { ExtractionService } from "@/services/extraction/extraction";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { PendingConversation, User } from "@/db/schema";
 
+type MissingField = "amount_cents" | "description";
+
 type PendingState = {
   partial: Partial<ExtractionResult>;
-  missing: "amount_cents" | "description";
+  missing: MissingField;
   cycles: number;
 };
 
 const TTL_MS = 10 * 60 * 1000;
+const MAX_CYCLES = 3;
+
+const QUESTIONS: Record<MissingField, string> = {
+  amount_cents: "Qual o valor?",
+  description: "O que foi esse gasto/recebimento?",
+};
+
+function parseAmountToCents(text: string): number | null {
+  const match = text.match(/\d+[.,]?\d*/);
+  if (!match) return null;
+  const normalized = match[0].replace(",", ".");
+  return Math.round(parseFloat(normalized) * 100);
+}
 
 export class MessageHandler {
   constructor(
@@ -64,13 +79,10 @@ export class MessageHandler {
   }
 
   private async handleRecord(result: ExtractionResult, user: User, rawMessage: string): Promise<string> {
-    if (!result.amount_cents) {
-      await this.savePending(user, result, "amount_cents");
-      return "Qual o valor?";
-    }
-    if (!result.description) {
-      await this.savePending(user, result, "description");
-      return "O que foi esse gasto/recebimento?";
+    const missing = firstMissingField(result);
+    if (missing) {
+      await this.savePending(user, result, missing);
+      return QUESTIONS[missing];
     }
     await this.transactionService.persist(result, user.id, rawMessage);
     return this.formatConfirmation(result);
@@ -79,9 +91,9 @@ export class MessageHandler {
   private async savePending(
     user: User,
     partial: Partial<ExtractionResult>,
-    missing: "amount_cents" | "description",
+    missing: MissingField,
   ): Promise<void> {
-    const state: PendingState = { partial, missing, cycles: 1 };
+    const state: PendingState = { partial, missing, cycles: 0 };
     await this.pendingRepo.create({
       userId: user.id,
       stateJson: state as unknown as Record<string, unknown>,
@@ -95,37 +107,24 @@ export class MessageHandler {
     user: User,
   ): Promise<string> {
     const state = pending.stateJson as unknown as PendingState;
+    const filled = fillMissing(state, text);
 
-    if (state.cycles >= 3) {
+    const missing = firstMissingField(filled);
+    if (!missing) {
+      await this.pendingRepo.delete(pending.id);
+      await this.transactionService.persist(filled as ExtractionResult, user.id, text);
+      return this.formatConfirmation(filled as ExtractionResult);
+    }
+
+    const cycles = state.cycles + 1;
+    if (cycles >= MAX_CYCLES) {
       await this.pendingRepo.delete(pending.id);
       return "Não consegui entender. Tente novamente com mais detalhes.";
     }
 
-    const filled = this.fillMissing(state, text);
-
-    if (!filled.amount_cents || !filled.description) {
-      const missing = !filled.amount_cents ? "amount_cents" : "description";
-      const nextState: PendingState = { partial: filled, missing, cycles: state.cycles + 1 };
-      await this.pendingRepo.update(pending.id, nextState as unknown as Record<string, unknown>);
-      return missing === "amount_cents" ? "Qual o valor?" : "O que foi esse gasto/recebimento?";
-    }
-
-    await this.pendingRepo.delete(pending.id);
-    await this.transactionService.persist(filled as ExtractionResult, user.id, text);
-    return this.formatConfirmation(filled as ExtractionResult);
-  }
-
-  private fillMissing(state: PendingState, text: string): Partial<ExtractionResult> {
-    if (state.missing === "amount_cents") {
-      const match = text.match(/\d+[.,]?\d*/);
-      if (match) {
-        const raw = match[0].replace(",", ".");
-        const cents = Math.round(parseFloat(raw) * 100);
-        return { ...state.partial, amount_cents: cents };
-      }
-      return state.partial;
-    }
-    return { ...state.partial, description: text.trim() };
+    const nextState: PendingState = { partial: filled, missing, cycles };
+    await this.pendingRepo.update(pending.id, nextState as unknown as Record<string, unknown>);
+    return QUESTIONS[missing];
   }
 
   private formatConfirmation(result: ExtractionResult): string {
@@ -141,4 +140,18 @@ export class MessageHandler {
     if (result.mantra) meta.push(`🎯 ${result.mantra}`);
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function firstMissingField(partial: Partial<ExtractionResult>): MissingField | null {
+  if (!partial.amount_cents) return "amount_cents";
+  if (!partial.description) return "description";
+  return null;
+}
+
+function fillMissing(state: PendingState, text: string): Partial<ExtractionResult> {
+  if (state.missing === "amount_cents") {
+    const cents = parseAmountToCents(text);
+    return cents === null ? state.partial : { ...state.partial, amount_cents: cents };
+  }
+  return { ...state.partial, description: text.trim() };
 }

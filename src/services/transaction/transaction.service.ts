@@ -9,6 +9,15 @@ import type { ExtractionResult } from "@/services/extraction/types";
 import type { Transaction } from "@/db/schema";
 import { invoiceFor } from "@/services/invoice/invoice";
 
+function toAccrualDate(date?: string): Date {
+  if (date) {
+    const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 export class TransactionService {
   constructor(
     private readonly categoryRepo: ICategoryRepository,
@@ -19,7 +28,7 @@ export class TransactionService {
   ) {}
 
   async persist(result: ExtractionResult, userId: number, rawMessage: string): Promise<Transaction> {
-    const accrualDate = result.date ? new Date(result.date) : new Date();
+    const accrualDate = toAccrualDate(result.date);
 
     const [category, card, mantra] = await Promise.all([
       result.category_name
