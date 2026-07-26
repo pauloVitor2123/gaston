@@ -21,7 +21,7 @@ describe("validateExtractionResult", () => {
       amount_cents: 500000,
       date: "2025-07-15",
       payment_method: "pix",
-      card_name: null,
+      card_name: undefined,
       category_name: "Salário",
       category_confidence: "high",
       installments_count: undefined,
