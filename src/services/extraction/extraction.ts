@@ -1,7 +1,10 @@
 import type { ILLMClient } from "@/types/llm";
-import { ExtractionError } from "./errors";
-import { buildDisambiguationPrompt, buildSystemPrompt } from "./prompts";
-import type { ExtractionContext, ExtractionResult } from "./types";
+import { ExtractionError } from "@/services/extraction/errors";
+import { buildDisambiguationPrompt, buildSystemPrompt } from "@/services/extraction/prompts";
+import { sanitizeUserMessage } from "@/services/extraction/sanitize";
+import type { ExtractionContext, ExtractionResult } from "@/services/extraction/types";
+import { validateExtractionResult } from "@/services/extraction/validate";
+import { applyMantraRules } from "@/services/extraction/mantra-rules";
 
 export class ExtractionService {
   constructor(
@@ -10,22 +13,34 @@ export class ExtractionService {
   ) {}
 
   async extract(message: string, context: ExtractionContext): Promise<ExtractionResult> {
-    const raw = await this.llm1.call(message, buildSystemPrompt(context));
+    const sanitized = sanitizeUserMessage(message);
 
-    let result: ExtractionResult;
+    const raw = await this.llm1.call(`<mensagem>${sanitized}</mensagem>`, buildSystemPrompt(context));
+
+    let parsed: unknown;
     try {
-      result = JSON.parse(raw) as ExtractionResult;
+      parsed = JSON.parse(raw);
     } catch {
       throw new ExtractionError(`Malformed LLM response: ${raw}`);
     }
 
-    if (result.category_confidence === "low") {
-      const category = await this.llm2.call(
-        buildDisambiguationPrompt(message, result, context),
-      );
-      return { ...result, category_name: category.trim(), category_confidence: "high" };
+    let result = validateExtractionResult(parsed);
+
+    const matchedCard = context.cards.find(
+      (c) => c.toLowerCase() === (result.card_name ?? "").toLowerCase(),
+    );
+    result = { ...result, card_name: matchedCard };
+
+    if (result.category_name && result.category_confidence === "high" && !context.categories.includes(result.category_name)) {
+      result = { ...result, category_confidence: "low" };
     }
 
-    return result;
+    if (result.category_confidence === "low") {
+      const parts = buildDisambiguationPrompt(sanitized, result, context);
+      const category = await this.llm2.call(parts.user, parts.system);
+      result = { ...result, category_name: category.trim(), category_confidence: "high" };
+    }
+
+    return { ...result, mantra: applyMantraRules(result.description ?? "") };
   }
 }

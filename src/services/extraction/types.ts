@@ -14,6 +14,7 @@ export interface ExtractionResult {
   category_confidence: Confidence;
   installments_count?: number;
   direction: Direction;
+  mantra?: string;
 }
 
 export interface ExtractionContext {

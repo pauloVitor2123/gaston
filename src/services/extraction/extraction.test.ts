@@ -20,15 +20,18 @@ const highConfidenceResult: ExtractionResult = {
   category_name: "Alimentação",
   category_confidence: "high",
   direction: "out",
+  mantra: "Pagas as Contas",
 };
 
 function makeLlm(response: string): ILLMClient {
   return { call: vi.fn().mockResolvedValue(response) };
 }
 
+const llm1Response: ExtractionResult = { ...highConfidenceResult, mantra: undefined };
+
 describe("ExtractionService.extract", () => {
-  it("calls llm1 and returns parsed ExtractionResult", async () => {
-    const llm1 = makeLlm(JSON.stringify(highConfidenceResult));
+  it("calls llm1 and returns parsed ExtractionResult with mantra", async () => {
+    const llm1 = makeLlm(JSON.stringify(llm1Response));
     const service = new ExtractionService(llm1, makeLlm(""));
 
     const result = await service.extract("almoço 35 reais Nubank", context);
@@ -39,7 +42,7 @@ describe("ExtractionService.extract", () => {
 
   it("does not call llm2 when category_confidence is high", async () => {
     const llm2 = makeLlm("Alimentação");
-    const service = new ExtractionService(makeLlm(JSON.stringify(highConfidenceResult)), llm2);
+    const service = new ExtractionService(makeLlm(JSON.stringify(llm1Response)), llm2);
 
     await service.extract("almoço 35 reais Nubank", context);
 
@@ -47,7 +50,7 @@ describe("ExtractionService.extract", () => {
   });
 
   it("calls llm2 and updates category when confidence is low", async () => {
-    const lowConfidence: ExtractionResult = { ...highConfidenceResult, category_confidence: "low" };
+    const lowConfidence: ExtractionResult = { ...llm1Response, category_confidence: "low" };
     const llm2 = makeLlm("Alimentação");
     const service = new ExtractionService(makeLlm(JSON.stringify(lowConfidence)), llm2);
 
@@ -62,5 +65,47 @@ describe("ExtractionService.extract", () => {
     const service = new ExtractionService(makeLlm("isso não é JSON"), makeLlm(""));
 
     await expect(service.extract("qualquer coisa", context)).rejects.toThrow(ExtractionError);
+  });
+
+  it("normalizes card_name to undefined when LLM returns unknown card", async () => {
+    const withUnknownCard: ExtractionResult = { ...llm1Response, card_name: "Itaú" };
+    const service = new ExtractionService(makeLlm(JSON.stringify(withUnknownCard)), makeLlm(""));
+
+    const result = await service.extract("almoço 35 reais Itaú", context);
+
+    expect(result.card_name).toBeUndefined();
+  });
+
+  it("preserves card_name when LLM returns a known card (case-insensitive)", async () => {
+    const withLowerCase: ExtractionResult = { ...llm1Response, card_name: "nubank" };
+    const service = new ExtractionService(makeLlm(JSON.stringify(withLowerCase)), makeLlm(""));
+
+    const result = await service.extract("almoço 35 reais nubank", context);
+
+    expect(result.card_name).toBe("Nubank");
+  });
+
+  it("downgrades category_confidence to low when category not in context, triggering llm2", async () => {
+    const withUnknownCategory: ExtractionResult = {
+      ...llm1Response,
+      category_name: "Tecnologia",
+      category_confidence: "high",
+    };
+    const llm2 = makeLlm("Lazer");
+    const service = new ExtractionService(makeLlm(JSON.stringify(withUnknownCategory)), llm2);
+
+    const result = await service.extract("comprei um jogo", context);
+
+    expect(llm2.call).toHaveBeenCalledOnce();
+    expect(result.category_name).toBe("Lazer");
+  });
+
+  it("sets mantra via applyMantraRules based on description", async () => {
+    const donation: ExtractionResult = { ...llm1Response, description: "dízimo da igreja" };
+    const service = new ExtractionService(makeLlm(JSON.stringify(donation)), makeLlm(""));
+
+    const result = await service.extract("dízimo 200 reais", context);
+
+    expect(result.mantra).toBe("Doar");
   });
 });
