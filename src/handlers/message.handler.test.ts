@@ -275,4 +275,133 @@ describe("MessageHandler.handle", () => {
       }),
     );
   });
+
+  it("returns onboarding for /start without hitting extraction", async () => {
+    const { handler, extraction } = makeHandler();
+
+    const reply = await handler.handle(100, "/start", "Test User");
+
+    expect(reply).toContain("Gaston");
+    expect(extraction.extract).not.toHaveBeenCalled();
+  });
+
+  it("cancels an active pending conversation on /cancelar", async () => {
+    const pending = { id: 42, userId: 1, stateJson: {}, expiresAt: new Date(Date.now() + 60_000) } as PendingConversation;
+    const { handler, repos, extraction } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(pending),
+    });
+
+    const reply = await handler.handle(100, "/cancelar", "Test User");
+
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(42);
+    expect(extraction.extract).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("cancelei");
+  });
+
+  it("reports nothing to cancel when there is no pending conversation", async () => {
+    const { handler } = makeHandler();
+
+    const reply = await handler.handle(100, "/cancelar", "Test User");
+
+    expect(reply.toLowerCase()).toContain("nada em andamento");
+  });
+
+  it("falls back to cash and warns when payment is card but the card is unknown", async () => {
+    const unknownCard: ExtractionResult = { ...fullResult, payment_method: "card", card_name: undefined };
+    const { handler, transactionService } = makeHandler(unknownCard);
+
+    const reply = await handler.handle(100, "comprei uma tv 2000 no santander", "Test User");
+
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.payment_method).toBe("cash");
+    expect(reply.toLowerCase()).toContain("cartão");
+  });
+
+  it("returns a friendly message and does not persist when extraction throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const repos = makeRepos();
+    const extraction = {
+      extract: vi.fn().mockRejectedValue(new Error("LLM down")),
+    } as unknown as ExtractionService;
+    const transactionService = {
+      persist: vi.fn(),
+    } as unknown as TransactionService;
+    const handler = new MessageHandler(
+      repos.userRepo,
+      repos.categoryRepo,
+      repos.cardRepo,
+      extraction,
+      transactionService,
+      repos.pendingRepo,
+    );
+
+    const reply = await handler.handle(100, "almoço 35", "Test User");
+
+    expect(reply).toContain("problema");
+    expect(transactionService.persist).not.toHaveBeenCalled();
+  });
+
+  it("parses Brazilian thousands+decimal amounts on resume (1.234,56 → 123456 cents)", async () => {
+    const pending: PendingConversation = {
+      id: 11,
+      userId: 1,
+      stateJson: {
+        partial: { ...fullResult, amount_cents: undefined },
+        missing: "amount_cents",
+        cycles: 0,
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const { handler, transactionService } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(pending),
+    });
+
+    await handler.handle(100, "1.234,56", "Test User");
+
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.amount_cents).toBe(123456);
+  });
+
+  it("accepts a zero amount on resume instead of looping", async () => {
+    const pending: PendingConversation = {
+      id: 12,
+      userId: 1,
+      stateJson: {
+        partial: { ...fullResult, amount_cents: undefined },
+        missing: "amount_cents",
+        cycles: 0,
+      },
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const { handler, transactionService } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(pending),
+    });
+
+    await handler.handle(100, "0", "Test User");
+
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.amount_cents).toBe(0);
+  });
+
+  it("drops a corrupt pending state and processes the message fresh", async () => {
+    const corrupt = { id: 99, userId: 1, stateJson: { foo: "bar" }, expiresAt: new Date(Date.now() + 60_000) } as unknown as PendingConversation;
+    const { handler, repos, extraction } = makeHandler(fullResult, {
+      findActiveByUser: () => Promise.resolve(corrupt),
+    });
+
+    await handler.handle(100, "almoço 35 reais nubank", "Test User");
+
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(99);
+    expect(extraction.extract).toHaveBeenCalledOnce();
+  });
+
+  it("defaults the transaction date to the user's timezone today when absent", async () => {
+    const noDate: ExtractionResult = { ...fullResult, date: undefined };
+    const { handler, transactionService } = makeHandler(noDate);
+
+    await handler.handle(100, "almoço 35 no nubank", "Test User");
+
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
 });

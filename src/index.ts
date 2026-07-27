@@ -27,6 +27,16 @@ export default {
       await ctx.reply(reply);
     });
 
+    bot.on("message", async (ctx) => {
+      await ctx.reply(
+        'Por enquanto só entendo mensagens de texto 🙂. Me conte seu gasto ou recebimento escrevendo, por exemplo: "almoço 35 no nubank".',
+      );
+    });
+
+    bot.catch((err) => {
+      console.error("Bot handler error", err);
+    });
+
     return webhookCallback(bot, "cloudflare-mod")(request);
   },
 } satisfies ExportedHandler<AppEnv>;
