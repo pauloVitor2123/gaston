@@ -108,4 +108,30 @@ describe("ExtractionService.extract", () => {
 
     expect(result.mantra).toBe("Doar");
   });
+
+  it("normalizes direction to match intent when LLM disagrees", async () => {
+    const inconsistent: ExtractionResult = {
+      ...llm1Response,
+      intent: "record_expense",
+      direction: "in",
+    };
+    const service = new ExtractionService(makeLlm(JSON.stringify(inconsistent)), makeLlm(""));
+
+    const result = await service.extract("almoço 35 reais Nubank", context);
+
+    expect(result.direction).toBe("out");
+  });
+
+  it("preserves direction for intents without a fixed direction", async () => {
+    const query: ExtractionResult = {
+      ...llm1Response,
+      intent: "query_balance",
+      direction: "in",
+    };
+    const service = new ExtractionService(makeLlm(JSON.stringify(query)), makeLlm(""));
+
+    const result = await service.extract("quanto gastei?", context);
+
+    expect(result.direction).toBe("in");
+  });
 });

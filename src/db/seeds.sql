@@ -1,22 +1,21 @@
--- TODO(Fase 8): substituir telegram_chat_id (placeholder = 1) pelo real
-INSERT OR IGNORE INTO users (id, telegram_chat_id, name, timezone)
-VALUES (1, 1, 'Paulo Vitor', 'America/Sao_Paulo');
+INSERT OR IGNORE INTO users (telegram_chat_id, name, timezone)
+VALUES (6069762694, 'Paulo Vitor', 'America/Sao_Paulo');
 
 INSERT OR IGNORE INTO cards (user_id, name, aliases, brand, closing_day, due_day) VALUES
-  (1, 'Nubank PF', '["nubank","nu","roxinho","nubank pf"]', 'Mastercard', 13, 20),
-  (1, 'Nubank PJ', '["nubank pj","nu pj","pj"]', 'Mastercard', 31, 7);
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Nubank PF', '["nubank","nu","roxinho","nubank pf"]', 'Mastercard', 13, 20),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Nubank PJ', '["nubank pj","nu pj","pj"]', 'Mastercard', 31, 7);
 
 INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
-  (1, 'Alimentação', '["comida","almoço","lanche","mercado","restaurante"]'),
-  (1, 'Transporte',  '["uber","99","gasolina","ônibus","combustível"]'),
-  (1, 'Saúde',       '["farmácia","remédio","médico","consulta"]'),
-  (1, 'Lazer',       '["cinema","bar","streaming","jogo"]'),
-  (1, 'Educação',    '["curso","livro","faculdade"]'),
-  (1, 'Moradia',     '["aluguel","condomínio","luz","água","internet"]'),
-  (1, 'Serviços',    '["assinatura","academia"]'),
-  (1, 'Outros',      '[]');
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Alimentação', '["comida","almoço","lanche","mercado","restaurante"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Transporte',  '["uber","99","gasolina","ônibus","combustível"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Saúde',       '["farmácia","remédio","médico","consulta"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Lazer',       '["cinema","bar","streaming","jogo"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Educação',    '["curso","livro","faculdade"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Moradia',     '["aluguel","condomínio","luz","água","internet"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Serviços',    '["assinatura","academia"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Outros',      '[]');
 
 INSERT OR IGNORE INTO mantras (user_id, name, target_percent) VALUES
-  (1, 'Pagas as Contas', 0.45),
-  (1, 'Se Pagar',        0.30),
-  (1, 'Doar',            0.10);
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pagas as Contas', 0.45),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Se Pagar',        0.30),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Doar',            0.10);

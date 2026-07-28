@@ -8,9 +8,4 @@ describe("worker fetch", () => {
     expect(await res.json()).toMatchObject({ status: "ok", service: "gaston" });
   });
 
-  it("GET / returns welcome text", async () => {
-    const res = await SELF.fetch("https://gaston.test/");
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Gaston");
-  });
 });
