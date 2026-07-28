@@ -2,6 +2,7 @@ export type Intent = "record_expense" | "record_income" | "query_balance" | "mar
 export type PaymentMethod = "card" | "pix" | "cash" | "debit";
 export type Direction = "in" | "out";
 export type Confidence = "high" | "low";
+export type Mantra = "Doar" | "Se Pagar" | "Pagas as Contas";
 
 export interface ExtractionResult {
   intent: Intent;
@@ -14,7 +15,7 @@ export interface ExtractionResult {
   category_confidence: Confidence;
   installments_count?: number;
   direction: Direction;
-  mantra?: string;
+  mantra?: Mantra;
 }
 
 export interface ExtractionContext {

@@ -2,9 +2,14 @@ import type { ILLMClient } from "@/types/llm";
 import { ExtractionError } from "@/services/extraction/errors";
 import { buildDisambiguationPrompt, buildSystemPrompt } from "@/services/extraction/prompts";
 import { sanitizeUserMessage } from "@/services/extraction/sanitize";
-import type { ExtractionContext, ExtractionResult } from "@/services/extraction/types";
+import type { Direction, ExtractionContext, ExtractionResult, Intent } from "@/services/extraction/types";
 import { validateExtractionResult } from "@/services/extraction/validate";
 import { applyMantraRules } from "@/services/extraction/mantra-rules";
+
+const DIRECTION_BY_INTENT: Partial<Record<Intent, Direction>> = {
+  record_expense: "out",
+  record_income: "in",
+};
 
 export class ExtractionService {
   constructor(
@@ -41,6 +46,10 @@ export class ExtractionService {
       result = { ...result, category_name: category.trim(), category_confidence: "high" };
     }
 
-    return { ...result, mantra: applyMantraRules(result.description ?? "") };
+    return {
+      ...result,
+      direction: DIRECTION_BY_INTENT[result.intent] ?? result.direction,
+      mantra: applyMantraRules(result.description ?? ""),
+    };
   }
 }

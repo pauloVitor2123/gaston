@@ -1,11 +1,8 @@
 import { Bot, webhookCallback } from "grammy";
 import { buildMessageHandler } from "@/composition-root";
+import type { LLMEnv } from "@/config";
 
-type AppEnv = Env & {
-  TELEGRAM_BOT_TOKEN: string;
-  OPENROUTER_API_KEY: string;
-  OPENAI_API_KEY: string;
-};
+type AppEnv = Env & LLMEnv & { TELEGRAM_BOT_TOKEN: string };
 
 export default {
   async fetch(request: Request, env: AppEnv, _ctx: ExecutionContext): Promise<Response> {
