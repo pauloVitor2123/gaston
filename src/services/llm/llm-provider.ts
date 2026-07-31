@@ -1,4 +1,10 @@
-import type { ILLMClient, IMetricsService } from "@/types/llm";
+import type {
+  ILLMClient,
+  IMetricsService,
+  LLMMessage,
+  ToolCallResult,
+  ToolDefinition,
+} from "@/types/llm";
 import { CreditsExhaustedError, LLMError } from "./errors";
 
 export class LLMProvider implements ILLMClient {
@@ -11,13 +17,17 @@ export class LLMProvider implements ILLMClient {
     }
   }
 
-  async call(userPrompt: string, systemPrompt?: string): Promise<string> {
+  async callWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    systemPrompt?: string,
+  ): Promise<ToolCallResult> {
     const errors: unknown[] = [];
 
     for (const client of this.clients) {
       const start = Date.now();
       try {
-        const result = await client.call(userPrompt, systemPrompt);
+        const result = await client.callWithTools(messages, tools, systemPrompt);
         await this.metrics.logAttempt({ latencyMs: Date.now() - start, success: true });
         return result;
       } catch (error) {

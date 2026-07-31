@@ -4,27 +4,22 @@ import type {
   IPendingConversationRepository,
   IUserRepository,
 } from "@/types/repository";
-import type { ExtractionResult } from "@/services/extraction/types";
-import type { ExtractionService } from "@/services/extraction/extraction";
-import type { TransactionService } from "@/services/transaction/transaction.service";
+import type { LLMMessage } from "@/types/llm";
+import type { CollectionAgent } from "@/services/collection/collection-agent";
+import type { Direction, TransactionDraft } from "@/services/collection/draft";
+import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
 import type { PendingConversation, User } from "@/db/schema";
-import { sanitizeUserMessage } from "@/services/extraction/sanitize";
+import { sanitizeUserMessage } from "@/services/collection/sanitize";
+import { applyMantraRules } from "@/services/collection/mantra-rules";
 
-type MissingField = "amount_cents" | "description";
-
-type PendingState = {
-  partial: Partial<ExtractionResult>;
-  missing: MissingField;
+type DraftState = {
+  messages: LLMMessage[];
   cycles: number;
 };
 
-const TTL_MS = 10 * 60 * 1000;
+const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CYCLES = 3;
-
-const QUESTIONS: Record<MissingField, string> = {
-  amount_cents: "Qual o valor?",
-  description: "O que foi esse gasto/recebimento?",
-};
+const MAX_THREAD_MESSAGES = 12;
 
 const ONBOARDING =
   "Oi! Sou o Gaston, seu assistente financeiro 💸\n\n" +
@@ -39,12 +34,15 @@ const GENERIC_ERROR =
 const UNKNOWN_CARD_WARNING =
   "\n⚠️ Não reconheci o cartão citado, registrei como dinheiro. Cadastre-o com /cartao.";
 
+const CYCLE_PAUSE =
+  "\n\nVou deixar esse registro guardado por aqui. Quando quiser continuar, é só me mandar o que falta. 👍";
+
 export class MessageHandler {
   constructor(
     private readonly userRepo: IUserRepository,
     private readonly categoryRepo: ICategoryRepository,
     private readonly cardRepo: ICardRepository,
-    private readonly extraction: ExtractionService,
+    private readonly agent: CollectionAgent,
     private readonly transactionService: TransactionService,
     private readonly pendingRepo: IPendingConversationRepository,
   ) {}
@@ -74,34 +72,42 @@ export class MessageHandler {
         : "Não há nada em andamento para cancelar.";
     }
 
+    let priorState: DraftState | null = null;
     if (pending) {
-      if (isPendingState(pending.stateJson)) {
-        return this.resumeConversation(pending, text, user);
+      if (isDraftState(pending.stateJson)) {
+        priorState = pending.stateJson;
+      } else {
+        await this.pendingRepo.delete(pending.id);
       }
-      await this.pendingRepo.delete(pending.id);
     }
 
+    const sanitized = sanitizeUserMessage(text);
     const today = todayInTimeZone(user.timezone);
     const [categories, cards] = await Promise.all([
       this.categoryRepo.listByUser(user.id),
       this.cardRepo.listByUser(user.id),
     ]);
+    const cardNames = cards.map((c) => c.name);
 
-    const context = {
+    const messages: LLMMessage[] = [
+      ...(priorState?.messages ?? []),
+      { role: "user", content: sanitized },
+    ];
+
+    const turn = await this.agent.run(messages, {
       categories: categories.map((c) => c.name),
-      cards: cards.map((c) => c.name),
+      cards: cardNames,
       today,
-    };
+    });
 
-    const result = await this.extraction.extract(text, context);
+    if (turn.kind === "draft") {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return this.recordDraft(turn.draft, user, sanitized, today, cardNames);
+    }
 
-    if (result.intent === "record_expense" || result.intent === "record_income") {
-      return this.handleRecord(result, user, text, today);
-    }
-    if (result.intent === "unknown") {
-      return "Não entendi, pode reformular?";
-    }
-    return "Funcionalidade em breve.";
+    const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
+    const cycles = (priorState?.cycles ?? 0) + 1;
+    return this.saveQuestion(user, pending, thread, cycles, turn.text);
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -110,90 +116,71 @@ export class MessageHandler {
     return this.userRepo.create({ telegramChatId: chatId, name });
   }
 
-  private async handleRecord(
-    result: ExtractionResult,
+  private async recordDraft(
+    draft: TransactionDraft,
     user: User,
     rawMessage: string,
     today: string,
+    cardNames: string[],
   ): Promise<string> {
-    const missing = firstMissingField(result);
-    if (missing) {
-      await this.savePending(user, result, missing);
-      return QUESTIONS[missing];
-    }
-    return this.recordTransaction(result, user, rawMessage, today);
-  }
+    const direction: Direction = draft.intent === "record_income" ? "in" : "out";
+    const matchedCard = cardNames.find(
+      (name) => name.toLowerCase() === (draft.card_name ?? "").toLowerCase(),
+    );
 
-  private async recordTransaction(
-    result: ExtractionResult,
-    user: User,
-    rawMessage: string,
-    today: string,
-  ): Promise<string> {
-    let finalized: ExtractionResult = { ...result, date: result.date ?? today };
+    let paymentMethod = draft.payment_method;
     let warning = "";
-    if (finalized.payment_method === "card" && !finalized.card_name) {
-      finalized = { ...finalized, payment_method: "cash" };
+    if (paymentMethod === "card" && !matchedCard) {
+      paymentMethod = "cash";
       warning = UNKNOWN_CARD_WARNING;
     }
-    await this.transactionService.persist(finalized, user.id, rawMessage);
-    return this.formatConfirmation(finalized) + warning;
+
+    const input: TransactionInput = {
+      direction,
+      description: draft.description,
+      amount_cents: draft.amount_cents,
+      date: draft.date ?? today,
+      payment_method: paymentMethod,
+      card_name: matchedCard,
+      category_name: draft.category_name,
+      mantra: applyMantraRules(draft.description),
+    };
+
+    await this.transactionService.persist(input, user.id, rawMessage);
+    return this.formatConfirmation(input) + warning;
   }
 
-  private async savePending(
+  private async saveQuestion(
     user: User,
-    partial: Partial<ExtractionResult>,
-    missing: MissingField,
-  ): Promise<void> {
-    const state: PendingState = { partial, missing, cycles: 0 };
-    await this.pendingRepo.create({
-      userId: user.id,
-      stateJson: state as unknown as Record<string, unknown>,
-      expiresAt: new Date(Date.now() + TTL_MS),
-    });
-  }
-
-  private async resumeConversation(
-    pending: PendingConversation,
-    text: string,
-    user: User,
+    pending: PendingConversation | null,
+    messages: LLMMessage[],
+    cycles: number,
+    question: string,
   ): Promise<string> {
-    const state = pending.stateJson as unknown as PendingState;
-    const filled = fillMissing(state, text);
+    const state: DraftState = { messages: messages.slice(-MAX_THREAD_MESSAGES), cycles };
 
-    const missing = firstMissingField(filled);
-    if (!missing) {
-      await this.pendingRepo.delete(pending.id);
-      return this.recordTransaction(
-        filled as ExtractionResult,
-        user,
-        text,
-        todayInTimeZone(user.timezone),
-      );
+    if (pending) {
+      await this.pendingRepo.update(pending.id, state as unknown as Record<string, unknown>);
+    } else {
+      await this.pendingRepo.create({
+        userId: user.id,
+        stateJson: state as unknown as Record<string, unknown>,
+        expiresAt: new Date(Date.now() + TTL_MS),
+      });
     }
 
-    const cycles = state.cycles + 1;
-    if (cycles >= MAX_CYCLES) {
-      await this.pendingRepo.delete(pending.id);
-      return "Não consegui entender. Tente novamente com mais detalhes.";
-    }
-
-    const nextState: PendingState = { partial: filled, missing, cycles };
-    await this.pendingRepo.update(pending.id, nextState as unknown as Record<string, unknown>);
-    return QUESTIONS[missing];
+    return cycles === MAX_CYCLES ? question + CYCLE_PAUSE : question;
   }
 
-  private formatConfirmation(result: ExtractionResult): string {
-    const reais = ((result.amount_cents ?? 0) / 100).toFixed(2).replace(".", ",");
+  private formatConfirmation(input: TransactionInput): string {
+    const reais = (input.amount_cents / 100).toFixed(2).replace(".", ",");
     const amount = `R$ ${reais}`;
-    const description = result.description
-      ? result.description.charAt(0).toUpperCase() + result.description.slice(1)
-      : "";
+    const description = input.description.charAt(0).toUpperCase() + input.description.slice(1);
     const parts = [description, amount].join(" — ");
     const meta: string[] = [];
-    if (result.category_name) meta.push(`📁 ${result.category_name}`);
-    if (result.card_name) meta.push(`💳 ${result.card_name}`);
-    if (result.mantra) meta.push(`🎯 ${result.mantra}`);
+    if (input.category_name) meta.push(`📁 ${input.category_name}`);
+    if (input.card_name) meta.push(`💳 ${input.card_name}`);
+    if (input.mantra) meta.push(`🎯 ${input.mantra}`);
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
 }
@@ -212,60 +199,21 @@ function todayInTimeZone(timeZone: string): string {
   }).format(new Date());
 }
 
-function isPendingState(value: unknown): value is PendingState {
+function isDraftState(value: unknown): value is DraftState {
   if (typeof value !== "object" || value === null) return false;
   const state = value as Record<string, unknown>;
   return (
-    (state.missing === "amount_cents" || state.missing === "description") &&
     typeof state.cycles === "number" &&
-    typeof state.partial === "object" &&
-    state.partial !== null
+    Array.isArray(state.messages) &&
+    state.messages.every(isLLMMessage)
   );
 }
 
-function firstMissingField(partial: Partial<ExtractionResult>): MissingField | null {
-  if (partial.amount_cents == null) return "amount_cents";
-  if (!partial.description) return "description";
-  return null;
-}
-
-function fillMissing(state: PendingState, text: string): Partial<ExtractionResult> {
-  const clean = sanitizeUserMessage(text);
-  if (state.missing === "amount_cents") {
-    const cents = parseAmountToCents(clean);
-    return cents == null ? state.partial : { ...state.partial, amount_cents: cents };
-  }
-  return { ...state.partial, description: clean.trim() };
-}
-
-function parseAmountToCents(text: string): number | null {
-  const match = text.match(/\d[\d.,]*/);
-  if (!match) return null;
-  const token = match[0].replace(/[.,]+$/, "");
-  return brNumberToCents(token);
-}
-
-function brNumberToCents(token: string): number | null {
-  const hasComma = token.includes(",");
-  const hasDot = token.includes(".");
-
-  let normalized: string;
-  if (hasComma && hasDot) {
-    normalized =
-      token.lastIndexOf(",") > token.lastIndexOf(".")
-        ? token.replace(/\./g, "").replace(",", ".")
-        : token.replace(/,/g, "");
-  } else if (hasComma) {
-    normalized = token.replace(/\./g, "").replace(",", ".");
-  } else if (hasDot) {
-    const parts = token.split(".");
-    const last = parts[parts.length - 1] ?? "";
-    normalized = parts.length > 2 || last.length === 3 ? token.replace(/\./g, "") : token;
-  } else {
-    normalized = token;
-  }
-
-  const value = parseFloat(normalized);
-  if (Number.isNaN(value)) return null;
-  return Math.round(value * 100);
+function isLLMMessage(value: unknown): value is LLMMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return (
+    (message.role === "user" || message.role === "assistant" || message.role === "system") &&
+    typeof message.content === "string"
+  );
 }

@@ -3,7 +3,7 @@ import { buildLLMConfigs, type LLMEnv } from "@/config";
 import type { ILLMClient, LLMClientConfig } from "@/types/llm";
 import { OpenAICompatibleClient } from "@/services/llm/openai-compatible-client";
 import { LLMProvider } from "@/services/llm/llm-provider";
-import { ExtractionService } from "@/services/extraction/extraction";
+import { CollectionAgent } from "@/services/collection/collection-agent";
 import { TransactionService } from "@/services/transaction/transaction.service";
 import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
@@ -27,13 +27,12 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
   const db = drizzle(env.DB);
   const llmConfigs = buildLLMConfigs(env);
 
-  const llm1 = buildProvider(llmConfigs.llm1, llmConfigs.fallback);
-  const llm2 = buildProvider(llmConfigs.llm2, llmConfigs.fallback);
+  const llm = buildProvider(llmConfigs.primary, llmConfigs.fallback);
 
   const categoryRepo = new CategoryRepository(db);
   const cardRepo = new CardRepository(db);
 
-  const extraction = new ExtractionService(llm1, llm2);
+  const agent = new CollectionAgent(llm);
   const transactionService = new TransactionService(
     categoryRepo,
     cardRepo,
@@ -46,7 +45,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     new UserRepository(db),
     categoryRepo,
     cardRepo,
-    extraction,
+    agent,
     transactionService,
     new PendingConversationRepository(db),
   );

@@ -1,4 +1,4 @@
-import type { Mantra } from "@/services/extraction/types";
+import type { Mantra } from "@/services/collection/draft";
 
 export function applyMantraRules(description: string): Mantra {
   const lower = description.toLowerCase();
