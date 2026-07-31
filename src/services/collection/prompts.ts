@@ -1,35 +1,19 @@
-export interface PayableLine {
-  type: "transaction" | "invoice";
-  id: number;
-  description: string;
-  amountCents: number;
-  dueDate: Date;
-}
-
-export interface RecentPaymentLine {
-  eventId: number;
-  description: string;
-  amountCents: number;
-  paidAt: Date;
-}
+import type { Payable, RecentPayment } from "@/services/payment/payment.service";
+import { formatReais } from "@/services/money";
 
 export interface AgentContext {
   categories: string[];
   cards: string[];
   today: string;
-  payables: PayableLine[];
-  recentPayments: RecentPaymentLine[];
-}
-
-function formatReais(cents: number): string {
-  return `R$ ${(cents / 100).toFixed(2).replace(".", ",")}`;
+  payables: Payable[];
+  recentPayments: RecentPayment[];
 }
 
 function formatDay(date: Date): string {
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function payablesBlock(payables: PayableLine[]): string {
+function payablesBlock(payables: Payable[]): string {
   if (payables.length === 0) return "Pendentes: (nenhum)";
   const lines = payables.map(
     (p) => `- [${p.type} #${p.id}] ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDay(p.dueDate)})`,
@@ -37,7 +21,7 @@ function payablesBlock(payables: PayableLine[]): string {
   return `Pendentes (use o id em mark_paid):\n${lines.join("\n")}`;
 }
 
-function recentPaymentsBlock(payments: RecentPaymentLine[]): string {
+function recentPaymentsBlock(payments: RecentPayment[]): string {
   if (payments.length === 0) return "Pagamentos recentes: (nenhum)";
   const lines = payments.map(
     (p) => `- [#${p.eventId}] ${p.description} — ${formatReais(p.amountCents)} (pago ${formatDay(p.paidAt)})`,

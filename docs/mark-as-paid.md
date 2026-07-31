@@ -31,6 +31,8 @@ O LLM interpreta a intenção e escolhe o alvo de uma lista dada pelo código. O
 - Compra de cartão avulsa **não** é pagável direto (só via fatura).
 - Instâncias de recorrente ficam de fora (recorrente ainda não existe).
 
+> **Deferido:** hoje `listPayables` usa `listOpen` (status `open`). Quando o ciclo de fechamento de fatura existir (fatura vira `closed` no dia de fechamento antes de ser paga), o filtro de pagáveis precisa incluir `closed`-não-paga. Nenhum código seta `closed` ainda, então ampliar agora seria especulativo.
+
 ## Fluxos
 
 **Pagar:** `mark_paid(target_id, target_type, amount_cents?)` → código valida candidato → salva `payment_confirm` + pergunta "Confirma pagar X — R$Y, vence Z?" → `sim` → registra `payment_event`, aplica (tx: `actualAmountCents` + `settled`; invoice: acumula `paidAmountCents`, cascata se integral) → confirmação.

@@ -7,12 +7,13 @@ import type {
 import type { LLMMessage } from "@/types/llm";
 import type { CollectionAgent } from "@/services/collection/collection-agent";
 import type { Direction, TransactionDraft } from "@/services/collection/draft";
-import type { Payable, PaymentService, PaymentTarget } from "@/services/payment/payment.service";
+import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
 import type { PendingConversation, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
+import { formatReais } from "@/services/money";
 
 type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 type PaymentConfirmState = {
@@ -83,14 +84,19 @@ export class MessageHandler {
     }
 
     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
-    if (pending && !state) await this.pendingRepo.delete(pending.id);
+    let activePending = pending;
+    if (pending && !state) {
+      await this.pendingRepo.delete(pending.id);
+      activePending = null;
+    }
 
     if (state?.kind === "payment_confirm" || state?.kind === "undo_confirm") {
       const resolved = await this.resolveConfirmation(pending!, state, text, user);
       if (resolved !== null) return resolved;
+      activePending = null;
     }
 
-    return this.runAgent(user, text, state?.kind === "draft" ? state : null, pending);
+    return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending);
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -235,7 +241,7 @@ export class MessageHandler {
     user: User,
     pending: PendingConversation | null,
     eventId: number,
-    recentPayments: { eventId: number; description: string; amountCents: number }[],
+    recentPayments: RecentPayment[],
   ): Promise<string> {
     const payment = recentPayments.find((p) => p.eventId === eventId);
     if (!payment) {
@@ -298,10 +304,6 @@ export class MessageHandler {
     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
-}
-
-function formatReais(cents: number): string {
-  return `R$ ${(cents / 100).toFixed(2).replace(".", ",")}`;
 }
 
 function commandOf(text: string): string {
