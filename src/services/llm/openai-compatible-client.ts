@@ -1,13 +1,20 @@
-import type { ILLMClient, LLMClientConfig } from "@/types/llm";
+import type {
+  ILLMClient,
+  LLMClientConfig,
+  LLMMessage,
+  ToolCallResult,
+  ToolDefinition,
+} from "@/types/llm";
 import { CreditsExhaustedError, LLMError } from "./errors";
 
-interface ChatMessage {
-  role: "system" | "user";
-  content: string;
+interface ResponseToolCall {
+  function?: { name?: string; arguments?: string };
 }
 
 interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{
+    message?: { content?: string; tool_calls?: ResponseToolCall[] };
+  }>;
 }
 
 export class OpenAICompatibleClient implements ILLMClient {
@@ -16,12 +23,46 @@ export class OpenAICompatibleClient implements ILLMClient {
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
-  async call(userPrompt: string, systemPrompt?: string): Promise<string> {
-    const messages: ChatMessage[] = [
-      ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
-      { role: "user" as const, content: userPrompt },
-    ];
+  async callWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    systemPrompt?: string,
+  ): Promise<ToolCallResult> {
+    const body = {
+      model: this.config.model,
+      messages: [
+        ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+        ...messages,
+      ],
+      tools: tools.map((tool) => ({
+        type: "function" as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      })),
+      tool_choice: "auto" as const,
+    };
 
+    const message = await this.post(body);
+    const toolCall = message.tool_calls?.[0];
+    if (toolCall?.function?.name) {
+      return { toolCall: this.parseToolCall(toolCall.function.name, toolCall.function.arguments) };
+    }
+    if (message.content) {
+      return { content: message.content };
+    }
+    throw new LLMError(
+      `Empty response from model ${this.config.model}`,
+      undefined,
+      this.config.url,
+    );
+  }
+
+  private async post(
+    body: unknown,
+  ): Promise<{ content?: string; tool_calls?: ResponseToolCall[] }> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.config.apiKey}`,
@@ -29,11 +70,10 @@ export class OpenAICompatibleClient implements ILLMClient {
     if (this.config.referer) headers["HTTP-Referer"] = this.config.referer;
     if (this.config.title) headers["X-Title"] = this.config.title;
 
-    const fetchFn = this.fetchFn;
-    const res = await fetchFn(`${this.config.url}/chat/completions`, {
+    const res = await this.fetchFn(`${this.config.url}/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: this.config.model, messages }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -53,14 +93,28 @@ export class OpenAICompatibleClient implements ILLMClient {
     }
 
     const data = (await res.json()) as ChatCompletionResponse;
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
+    const message = data.choices?.[0]?.message;
+    if (!message) {
       throw new LLMError(
         `Empty response from model ${this.config.model}`,
         res.status,
         this.config.url,
       );
     }
-    return content;
+    return message;
+  }
+
+  private parseToolCall(name: string, rawArguments?: string) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawArguments ?? "{}");
+    } catch {
+      throw new LLMError(
+        `Malformed tool arguments from model ${this.config.model}: ${rawArguments}`,
+        undefined,
+        this.config.url,
+      );
+    }
+    return { name, arguments: parsed as Record<string, unknown> };
   }
 }

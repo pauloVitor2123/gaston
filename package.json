@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",
-    "grammy": "^1.30.0"
+    "grammy": "^1.30.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",

@@ -5,9 +5,20 @@ import type {
   IMantraRepository,
   ITransactionRepository,
 } from "@/types/repository";
-import type { ExtractionResult } from "@/services/extraction/types";
+import type { Direction, Mantra, PaymentMethod } from "@/services/collection/draft";
 import type { Transaction } from "@/db/schema";
 import { invoiceFor } from "@/services/invoice/invoice";
+
+export interface TransactionInput {
+  direction: Direction;
+  description: string;
+  amount_cents: number;
+  date?: string;
+  payment_method?: PaymentMethod;
+  card_name?: string;
+  category_name?: string;
+  mantra?: Mantra;
+}
 
 function toAccrualDate(date?: string): Date {
   if (date) {
@@ -27,7 +38,7 @@ export class TransactionService {
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
   ) {}
 
-  async persist(result: ExtractionResult, userId: number, rawMessage: string): Promise<Transaction> {
+  async persist(result: TransactionInput, userId: number, rawMessage: string): Promise<Transaction> {
     const accrualDate = toAccrualDate(result.date);
 
     const [category, card, mantra] = await Promise.all([
@@ -61,8 +72,8 @@ export class TransactionService {
     return this.transactionRepo.create({
       userId,
       direction: result.direction,
-      description: result.description!,
-      expectedAmountCents: result.amount_cents!,
+      description: result.description,
+      expectedAmountCents: result.amount_cents,
       accrualDate,
       dueDate,
       paymentMethod: result.payment_method ?? "cash",

@@ -17,8 +17,7 @@
     }
   ],
   "vars": {
-    "LLM1_MODEL": "meta-llama/llama-3.1-8b-instruct:free",
-    "LLM2_MODEL": "anthropic/claude-sonnet-4",
-    "FALLBACK_MODEL": "gpt-4o-mini"
+    "COLLECTION_MODEL": "gpt-4o-mini",
+    "COLLECTION_FALLBACK_MODEL": "anthropic/claude-3.5-haiku"
   }
 }

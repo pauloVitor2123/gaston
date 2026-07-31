@@ -6,8 +6,7 @@ import type {
   IMantraRepository,
   ITransactionRepository,
 } from "@/types/repository";
-import { TransactionService } from "@/services/transaction/transaction.service";
-import type { ExtractionResult } from "@/services/extraction/types";
+import { TransactionService, type TransactionInput } from "@/services/transaction/transaction.service";
 import type { Card, CardInvoice, Category, Mantra, Transaction } from "@/db/schema";
 
 const userId = 1;
@@ -39,15 +38,13 @@ const mockInvoice = {
 } as CardInvoice;
 const mockTransaction = { id: 1, userId } as Transaction;
 
-const baseResult: ExtractionResult = {
-  intent: "record_expense",
+const baseResult: TransactionInput = {
   description: "almoço",
   amount_cents: 3500,
   date: "2025-01-15",
   payment_method: "card",
   card_name: "Nubank",
   category_name: "Alimentação",
-  category_confidence: "high",
   direction: "out",
   mantra: "Pagas as Contas",
 };
@@ -124,7 +121,7 @@ describe("TransactionService.persist", () => {
 
   it("skips card invoice for non-card payment", async () => {
     const { service, repos } = makeService();
-    const result: ExtractionResult = { ...baseResult, payment_method: "pix", card_name: undefined };
+    const result: TransactionInput = { ...baseResult, payment_method: "pix", card_name: undefined };
     await service.persist(result, userId, "raw");
 
     expect(repos.cardInvoiceRepo.findOrCreate).not.toHaveBeenCalled();
@@ -147,7 +144,7 @@ describe("TransactionService.persist", () => {
 
   it("defaults paymentMethod to 'cash' when not provided", async () => {
     const { service, repos } = makeService();
-    const result: ExtractionResult = { ...baseResult, payment_method: undefined };
+    const result: TransactionInput = { ...baseResult, payment_method: undefined };
     await service.persist(result, userId, "raw");
 
     const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
@@ -156,7 +153,7 @@ describe("TransactionService.persist", () => {
 
   it("defaults accrualDate to today's UTC midnight when result.date is absent", async () => {
     const { service, repos } = makeService();
-    const result: ExtractionResult = { ...baseResult, date: undefined, payment_method: "pix" };
+    const result: TransactionInput = { ...baseResult, date: undefined, payment_method: "pix" };
     await service.persist(result, userId, "raw");
 
     const now = new Date();

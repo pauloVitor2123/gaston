@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMantraRules } from "@/services/extraction/mantra-rules";
+import { applyMantraRules } from "@/services/collection/mantra-rules";
 
 describe("applyMantraRules", () => {
   it("returns 'Doar' for dízimo", () => {

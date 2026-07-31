@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeUserMessage } from "@/services/extraction/sanitize";
+import { sanitizeUserMessage } from "@/services/collection/sanitize";
 
 const zwsp = String.fromCharCode(0x200b);
 const zwnj = String.fromCharCode(0x200c);

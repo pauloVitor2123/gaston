@@ -17,12 +17,12 @@ Core value: instead of filling forms or opening spreadsheets, users write freely
 - **Bot framework**: [grammY](https://grammy.dev/) (Telegram, zero-cost)
 - **Scheduled jobs**: Cloudflare Cron Triggers
 
-**LLM Stack**
+**LLM Stack** (pivoted — see [`docs/pivot-coleta-llm.md`](./docs/pivot-coleta-llm.md))
 
-- **Multi-provider abstraction** via `callLLM()`: Anthropic (API direct), OpenAI, or OpenRouter selectable via `LLM1_PROVIDER` and `LLM2_PROVIDER` env vars
-- **LLM 1** (fast/cheap, Haiku): intent extraction → JSON (intent, value, date, category, card, installments_count, etc.)
-- **LLM 2** (called on demand, ~15–20% of messages): disambiguation of category/mantra when LLM 1 result is ambiguous
-- **Strategy**: consume paused credits (OpenAI, OpenRouter) before spending new money on Anthropic API
+- **Collection is an AI agent**, not a state machine: a single `CollectionAgent` drives the conversation via native **tool/function-calling**. The LLM either calls the `record_transaction` tool (when it has at least value + description) or replies with a text question. `zod` is the single source of truth — it derives the TS type (`z.infer`), the JSON schema for the tool (`z.toJSONSchema`), and runtime validation.
+- **Principle: LLM proposes, code disposes.** The model does the "soft" part (interpret free text, decide what's missing, ask); code owns validation and persistence. The final decision to write to the DB is never delegated to the LLM.
+- **Model**: `gpt-4o-mini` (OpenAI, burns paused credits) with `anthropic/claude-3.5-haiku` (OpenRouter) as fallback via `OpenAICompatibleClient` + `LLMProvider`. The `:free` llama model is retired; LLM1/LLM2 are fused into one collection flow.
+- **Strategy**: consume paused credits (OpenAI, OpenRouter) before spending new money.
 
 **Why these choices**
 
@@ -57,30 +57,29 @@ All tables are multi-tenant by `user_id` (design for 100+ users from day 1).
 ## Processing Pipeline
 
 ```
-User message
+User message (+ prior draft thread, if any)
   ↓
-LLM 1 (Haiku): extract intent + fields → JSON
+CollectionAgent → LLM with record_transaction tool (zod-derived JSON schema):
+  • tool call  → validated by zod (value + description required)
+  • text reply → a clarifying question (required field still missing)
   ↓
-Validation in code (not LLM):
-  • Value + description present? (date defaults to today)
-  • Installment: count present?
-  • Card cited exists in DB? (match by name/alias)
-  • Category matches DB categories or synonym?
-  • Mantra inferrable by rule (~95% covered)?
+On tool call, code disposes (deterministic):
+  • date defaults to today; payment_method defaults to cash
+  • card cited matched against DB names — unknown card → cash + warning
+  • mantra inferred by rule (~95% covered)
   ↓
-If category/mantra ambiguous → LLM 2 (15–20% of messages)
-  ↓
-If required field missing → ask consolidator question (max 3 cycles)
+On question: save/refresh draft in pending_conversations (TTL 24h), reply the question.
+  Cycle cap (3) never aborts — it pauses and keeps the draft alive for the next message.
   ↓
 Persist + 1-line confirmation
 ```
 
-**Mantra inference rules** cover ~95% before LLM 2:
+**Mantra inference rules** (applied in code after the tool call):
 - "dízimo, doação" → Doar
 - "TotalPass, academia, terapia" → Se Pagar
 - default → Pagas as Contas
 
-**Open question**: after 1–2 weeks of MVP usage, validate if LLM 1 alone (with few-shot + category list in prompt) hits 90%+ accuracy, making LLM 2 optional. Decision point: accuracy vs. cost trade-off.
+**Scope**: only lançamentos (record_expense/income) for now. Queries (balance, invoices, bills) come later.
 
 ## Commands (Portuguese UI, English code)
 
@@ -108,7 +107,7 @@ Persist + 1-line confirmation
 - **Code language**: English (snake_case, clear intent). UI strings only in Portuguese.
 - **Database access**: **Drizzle ORM** (decided). `src/db/schema.ts` is the single source of truth; `drizzle-kit generate` produces migrations; seeds live in `src/db/seeds.sql` (applied via `wrangler d1 execute --file`).
 - **Pending conversation state**: **`expires_at` on read** (decided) — no Cron cleanup.
-- **LLM stack**: single `OpenAICompatibleClient` (covers OpenRouter + OpenAI). Model IDs in `wrangler.jsonc` `vars`; API keys via `wrangler secret put` (never in git/GitHub). Per-function fallback chains: LLM1 `llama-3.1-8b:free` → `gpt-4o-mini` (OpenAI); LLM2 `claude-sonnet-4` → `gpt-4o-mini`. `CreditsExhaustedError` when all fail.
+- **LLM stack**: `OpenAICompatibleClient` exposes `callWithTools` (native tool-calling); `LLMProvider` chains primary → fallback. Model IDs in `wrangler.jsonc` `vars` (`COLLECTION_MODEL` = `gpt-4o-mini` on OpenAI, `COLLECTION_FALLBACK_MODEL` = `anthropic/claude-3.5-haiku` on OpenRouter); API keys via `wrangler secret put` (never in git/GitHub). `CreditsExhaustedError` when all fail. Collection schema/agent live in `src/services/collection/` (`draft.ts` zod schema + tool, `collection-agent.ts`, `prompts.ts`).
 - **Architecture**: constructor injection; specific repositories (service coordinates multi-repo); tests colocated (`x.ts` + `x.test.ts`).
 - **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
 - **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`
