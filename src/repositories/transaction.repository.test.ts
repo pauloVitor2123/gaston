@@ -87,4 +87,28 @@ describe("TransactionRepository", () => {
 
     expect(await repo.findById(base.userId + 999, tx.id)).toBeNull();
   });
+
+  it("listPayable returns only pending non-card transactions", async () => {
+    const { repo, base, userId } = await setup(4006);
+    const d = new Date();
+    await repo.create({ ...base, description: "pix pendente", accrualDate: d, dueDate: d });
+    await repo.create({ ...base, description: "cartão", paymentMethod: "card", accrualDate: d, dueDate: d });
+    await repo.create({ ...base, description: "já pago", status: "settled", accrualDate: d, dueDate: d });
+
+    const payable = await repo.listPayable(userId);
+    expect(payable).toHaveLength(1);
+    expect(payable[0]?.description).toBe("pix pendente");
+  });
+
+  it("update patches settlement fields for the owning user", async () => {
+    const { repo, base, userId } = await setup(4007);
+    const d = new Date();
+    const tx = await repo.create({ ...base, description: "conta", accrualDate: d, dueDate: d });
+
+    await repo.update(userId, tx.id, { status: "settled", actualAmountCents: 1234, settledAt: d });
+
+    const updated = await repo.findById(userId, tx.id);
+    expect(updated?.status).toBe("settled");
+    expect(updated?.actualAmountCents).toBe(1234);
+  });
 });
