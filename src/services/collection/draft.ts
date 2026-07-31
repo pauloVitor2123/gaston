@@ -12,7 +12,6 @@ export const transactionDraftSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  installments_count: z.number().int().positive().optional(),
 });
 
 export type TransactionDraft = z.infer<typeof transactionDraftSchema>;

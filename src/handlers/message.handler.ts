@@ -202,5 +202,18 @@ function todayInTimeZone(timeZone: string): string {
 function isDraftState(value: unknown): value is DraftState {
   if (typeof value !== "object" || value === null) return false;
   const state = value as Record<string, unknown>;
-  return Array.isArray(state.messages) && typeof state.cycles === "number";
+  return (
+    typeof state.cycles === "number" &&
+    Array.isArray(state.messages) &&
+    state.messages.every(isLLMMessage)
+  );
+}
+
+function isLLMMessage(value: unknown): value is LLMMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return (
+    (message.role === "user" || message.role === "assistant" || message.role === "system") &&
+    typeof message.content === "string"
+  );
 }

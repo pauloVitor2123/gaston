@@ -20,7 +20,6 @@ Campos opcionais — só preencha quando o usuário informar; não pergunte sobr
 - card_name: use apenas um cartão da lista abaixo; se o usuário citar um cartão que não está na lista, deixe em branco.
 - category_name: use apenas uma categoria da lista abaixo.
 - date: formato YYYY-MM-DD (padrão: ${context.today}).
-- installments_count: número de parcelas, quando o usuário indicar "Nx".
 
 Categorias disponíveis: ${context.categories.join(", ") || "(nenhuma)"}
 Cartões disponíveis: ${context.cards.join(", ") || "(nenhum)"}
