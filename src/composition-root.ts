@@ -5,6 +5,8 @@ import { OpenAICompatibleClient } from "@/services/llm/openai-compatible-client"
 import { LLMProvider } from "@/services/llm/llm-provider";
 import { CollectionAgent } from "@/services/collection/collection-agent";
 import { TransactionService } from "@/services/transaction/transaction.service";
+import { PaymentService } from "@/services/payment/payment.service";
+import { PaymentEventRepository } from "@/repositories/payment-event.repository";
 import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
 import { CategoryRepository } from "@/repositories/category.repository";
@@ -31,14 +33,21 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
 
   const categoryRepo = new CategoryRepository(db);
   const cardRepo = new CardRepository(db);
+  const transactionRepo = new TransactionRepository(db);
+  const cardInvoiceRepo = new CardInvoiceRepository(db);
 
   const agent = new CollectionAgent(llm);
   const transactionService = new TransactionService(
     categoryRepo,
     cardRepo,
     new MantraRepository(db),
-    new TransactionRepository(db),
-    new CardInvoiceRepository(db),
+    transactionRepo,
+    cardInvoiceRepo,
+  );
+  const paymentService = new PaymentService(
+    transactionRepo,
+    cardInvoiceRepo,
+    new PaymentEventRepository(db),
   );
 
   return new MessageHandler(
@@ -47,6 +56,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     cardRepo,
     agent,
     transactionService,
+    paymentService,
     new PendingConversationRepository(db),
   );
 }

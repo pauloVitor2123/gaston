@@ -17,21 +17,23 @@ describe("PaymentEventRepository", () => {
       userId,
       targetType: "transaction",
       targetId: 42,
+      description: "conta de luz",
       amountCents: 1800,
       paidAt: new Date(),
     });
 
     const found = await repo.findById(userId, created.id);
     expect(found?.amountCents).toBe(1800);
+    expect(found?.description).toBe("conta de luz");
     expect(found?.targetType).toBe("transaction");
     expect(await repo.findById(userId + 999, created.id)).toBeNull();
   });
 
   it("listByTarget returns only active events for that target", async () => {
     const { repo, userId } = await setup(9002);
-    await repo.create({ userId, targetType: "invoice", targetId: 7, amountCents: 1000, paidAt: new Date() });
-    await repo.create({ userId, targetType: "invoice", targetId: 7, amountCents: 500, paidAt: new Date() });
-    await repo.create({ userId, targetType: "invoice", targetId: 8, amountCents: 300, paidAt: new Date() });
+    await repo.create({ userId, targetType: "invoice", targetId: 7, description: "Fatura", amountCents: 1000, paidAt: new Date() });
+    await repo.create({ userId, targetType: "invoice", targetId: 7, description: "Fatura", amountCents: 500, paidAt: new Date() });
+    await repo.create({ userId, targetType: "invoice", targetId: 8, description: "Fatura", amountCents: 300, paidAt: new Date() });
 
     const events = await repo.listByTarget(userId, "invoice", 7);
     expect(events).toHaveLength(2);
@@ -44,6 +46,7 @@ describe("PaymentEventRepository", () => {
       userId,
       targetType: "invoice",
       targetId: 5,
+      description: "Fatura",
       amountCents: 1000,
       paidAt: new Date(),
     });
@@ -61,6 +64,7 @@ describe("PaymentEventRepository", () => {
       userId,
       targetType: "transaction",
       targetId: 1,
+      description: "antigo",
       amountCents: 100,
       paidAt: new Date(Date.now() - 60_000),
     });
@@ -68,6 +72,7 @@ describe("PaymentEventRepository", () => {
       userId,
       targetType: "transaction",
       targetId: 2,
+      description: "recente",
       amountCents: 200,
       paidAt: new Date(),
     });

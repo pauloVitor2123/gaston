@@ -3,6 +3,7 @@ CREATE TABLE `payment_events` (
 	`user_id` integer NOT NULL,
 	`target_type` text NOT NULL,
 	`target_id` integer NOT NULL,
+	`description` text NOT NULL,
 	`amount_cents` integer NOT NULL,
 	`paid_at` integer NOT NULL,
 	`voided_at` integer,

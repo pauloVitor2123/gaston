@@ -10,6 +10,7 @@ export const paymentEvents = sqliteTable(
       .references(() => users.id),
     targetType: text("target_type", { enum: ["transaction", "invoice"] }).notNull(),
     targetId: integer("target_id").notNull(),
+    description: text("description").notNull(),
     amountCents: integer("amount_cents").notNull(),
     paidAt: integer("paid_at", { mode: "timestamp" }).notNull(),
     voidedAt: integer("voided_at", { mode: "timestamp" }),

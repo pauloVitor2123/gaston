@@ -31,7 +31,15 @@ export interface PaymentResult {
 
 export interface UndoResult {
   type: PayableType;
+  description: string;
   amountCents: number;
+}
+
+export interface RecentPayment {
+  eventId: number;
+  description: string;
+  amountCents: number;
+  paidAt: Date;
 }
 
 const INVOICE_LABEL = "Fatura do cartão";
@@ -78,6 +86,16 @@ export class PaymentService {
     return [...transactionPayables, ...invoicePayables];
   }
 
+  async listRecentPayments(userId: number, limit: number): Promise<RecentPayment[]> {
+    const events = await this.paymentEventRepo.listRecentByUser(userId, limit);
+    return events.map((e) => ({
+      eventId: e.id,
+      description: e.description,
+      amountCents: e.amountCents,
+      paidAt: e.paidAt,
+    }));
+  }
+
   async pay(userId: number, target: PaymentTarget, amountCents?: number): Promise<PaymentResult> {
     return target.type === "transaction"
       ? this.payTransaction(userId, target.id, amountCents)
@@ -102,7 +120,7 @@ export class PaymentService {
       await this.recomputeInvoice(userId, event.targetId);
     }
 
-    return { type: event.targetType, amountCents: event.amountCents };
+    return { type: event.targetType, description: event.description, amountCents: event.amountCents };
   }
 
   private async payTransaction(
@@ -123,6 +141,7 @@ export class PaymentService {
       userId,
       targetType: "transaction",
       targetId: id,
+      description: transaction.description,
       amountCents: actual,
       paidAt: now,
     });
@@ -161,6 +180,7 @@ export class PaymentService {
       userId,
       targetType: "invoice",
       targetId: id,
+      description: INVOICE_LABEL,
       amountCents: payAmount,
       paidAt: now,
     });

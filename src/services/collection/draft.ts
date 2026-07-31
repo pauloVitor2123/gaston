@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolDefinition } from "@/types/llm";
+import { toToolParameters } from "@/services/llm/tool-schema";
 
 export const transactionDraftSchema = z.object({
   intent: z.enum(["record_expense", "record_income"]),
@@ -28,11 +29,5 @@ export const RECORD_TRANSACTION_TOOL: ToolDefinition = {
     "Registra um lançamento financeiro (gasto ou recebimento) do usuário. " +
     "Chame apenas quando tiver ao menos o valor (amount_cents) e a descrição (description). " +
     "Deixe de fora os campos opcionais que o usuário não informou.",
-  parameters: draftJsonSchema(),
+  parameters: toToolParameters(transactionDraftSchema),
 };
-
-function draftJsonSchema(): Record<string, unknown> {
-  const schema = z.toJSONSchema(transactionDraftSchema) as Record<string, unknown>;
-  delete schema.$schema;
-  return schema;
-}

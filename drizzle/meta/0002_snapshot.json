@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "21e08399-4bc3-4bb8-8838-1ca20fd21e23",
+  "id": "e469c85b-3162-4c6b-b81e-177c0d829c34",
   "prevId": "156ae1aa-a7a7-472f-8c35-3fd306debe54",
   "tables": {
     "users": {
@@ -989,6 +989,13 @@
         "target_id": {
           "name": "target_id",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

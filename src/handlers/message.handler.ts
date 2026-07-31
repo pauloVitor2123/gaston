@@ -7,19 +7,28 @@ import type {
 import type { LLMMessage } from "@/types/llm";
 import type { CollectionAgent } from "@/services/collection/collection-agent";
 import type { Direction, TransactionDraft } from "@/services/collection/draft";
+import type { Payable, PaymentService, PaymentTarget } from "@/services/payment/payment.service";
+import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
 import type { PendingConversation, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
 
-type DraftState = {
-  messages: LLMMessage[];
-  cycles: number;
+type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
+type PaymentConfirmState = {
+  kind: "payment_confirm";
+  target: PaymentTarget;
+  amountCents?: number;
+  description: string;
 };
+type UndoConfirmState = { kind: "undo_confirm"; eventId: number; description: string };
+type PendingState = DraftState | PaymentConfirmState | UndoConfirmState;
 
-const TTL_MS = 24 * 60 * 60 * 1000;
+const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const CONFIRM_TTL_MS = 10 * 60 * 1000;
 const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
+const RECENT_PAYMENTS_LIMIT = 5;
 
 const ONBOARDING =
   "Oi! Sou o Gaston, seu assistente financeiro 💸\n\n" +
@@ -44,6 +53,7 @@ export class MessageHandler {
     private readonly cardRepo: ICardRepository,
     private readonly agent: CollectionAgent,
     private readonly transactionService: TransactionService,
+    private readonly paymentService: PaymentService,
     private readonly pendingRepo: IPendingConversationRepository,
   ) {}
 
@@ -68,29 +78,74 @@ export class MessageHandler {
     if (command === "/cancelar") {
       if (pending) await this.pendingRepo.delete(pending.id);
       return pending
-        ? "Ok, cancelei o registro em andamento. 👍"
+        ? "Ok, cancelei o que estava em andamento. 👍"
         : "Não há nada em andamento para cancelar.";
     }
 
-    let priorState: DraftState | null = null;
-    if (pending) {
-      if (isDraftState(pending.stateJson)) {
-        priorState = pending.stateJson;
-      } else {
-        await this.pendingRepo.delete(pending.id);
-      }
+    const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
+    if (pending && !state) await this.pendingRepo.delete(pending.id);
+
+    if (state?.kind === "payment_confirm" || state?.kind === "undo_confirm") {
+      const resolved = await this.resolveConfirmation(pending!, state, text, user);
+      if (resolved !== null) return resolved;
     }
 
+    return this.runAgent(user, text, state?.kind === "draft" ? state : null, pending);
+  }
+
+  private async resolveUser(chatId: number, name: string): Promise<User> {
+    const existing = await this.userRepo.findByChatId(chatId);
+    if (existing) return existing;
+    return this.userRepo.create({ telegramChatId: chatId, name });
+  }
+
+  private async resolveConfirmation(
+    pending: PendingConversation,
+    state: PaymentConfirmState | UndoConfirmState,
+    text: string,
+    user: User,
+  ): Promise<string | null> {
+    const answer = affirmationOf(text);
+    if (answer === null) {
+      await this.pendingRepo.delete(pending.id);
+      return null;
+    }
+
+    await this.pendingRepo.delete(pending.id);
+    if (answer === "no") return "Ok, deixei como estava. 👍";
+
+    try {
+      if (state.kind === "payment_confirm") {
+        const result = await this.paymentService.pay(user.id, state.target, state.amountCents);
+        const suffix = result.type === "invoice" && !result.fullyPaid ? " (pagamento parcial)" : "";
+        return `✅ Pago: ${result.description} — ${formatReais(result.amountCents)}${suffix}`;
+      }
+      const undone = await this.paymentService.undo(user.id, state.eventId);
+      return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
+    } catch (error) {
+      if (error instanceof PaymentError) return error.message;
+      throw error;
+    }
+  }
+
+  private async runAgent(
+    user: User,
+    text: string,
+    draft: DraftState | null,
+    pending: PendingConversation | null,
+  ): Promise<string> {
     const sanitized = sanitizeUserMessage(text);
     const today = todayInTimeZone(user.timezone);
-    const [categories, cards] = await Promise.all([
+    const [categories, cards, payables, recentPayments] = await Promise.all([
       this.categoryRepo.listByUser(user.id),
       this.cardRepo.listByUser(user.id),
+      this.paymentService.listPayables(user.id),
+      this.paymentService.listRecentPayments(user.id, RECENT_PAYMENTS_LIMIT),
     ]);
     const cardNames = cards.map((c) => c.name);
 
     const messages: LLMMessage[] = [
-      ...(priorState?.messages ?? []),
+      ...(draft?.messages ?? []),
       { role: "user", content: sanitized },
     ];
 
@@ -98,22 +153,24 @@ export class MessageHandler {
       categories: categories.map((c) => c.name),
       cards: cardNames,
       today,
+      payables,
+      recentPayments,
     });
 
     if (turn.kind === "draft") {
       if (pending) await this.pendingRepo.delete(pending.id);
       return this.recordDraft(turn.draft, user, sanitized, today, cardNames);
     }
+    if (turn.kind === "pay") {
+      return this.startPaymentConfirm(user, pending, turn.target, turn.amountCents, payables);
+    }
+    if (turn.kind === "undo") {
+      return this.startUndoConfirm(user, pending, turn.eventId, recentPayments);
+    }
 
     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
-    const cycles = (priorState?.cycles ?? 0) + 1;
+    const cycles = (draft?.cycles ?? 0) + 1;
     return this.saveQuestion(user, pending, thread, cycles, turn.text);
-  }
-
-  private async resolveUser(chatId: number, name: string): Promise<User> {
-    const existing = await this.userRepo.findByChatId(chatId);
-    if (existing) return existing;
-    return this.userRepo.create({ telegramChatId: chatId, name });
   }
 
   private async recordDraft(
@@ -150,6 +207,51 @@ export class MessageHandler {
     return this.formatConfirmation(input) + warning;
   }
 
+  private async startPaymentConfirm(
+    user: User,
+    pending: PendingConversation | null,
+    target: PaymentTarget,
+    amountCents: number | undefined,
+    payables: Payable[],
+  ): Promise<string> {
+    const payable = payables.find((p) => p.type === target.type && p.id === target.id);
+    if (!payable) {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return "Não encontrei esse pendente na sua lista. Manda /pendentes pra eu te mostrar o que está em aberto.";
+    }
+
+    const amount = amountCents ?? payable.amountCents;
+    const state: PaymentConfirmState = {
+      kind: "payment_confirm",
+      target,
+      amountCents,
+      description: payable.description,
+    };
+    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return `Confirma pagar ${payable.description} — ${formatReais(amount)}? (sim/não)`;
+  }
+
+  private async startUndoConfirm(
+    user: User,
+    pending: PendingConversation | null,
+    eventId: number,
+    recentPayments: { eventId: number; description: string; amountCents: number }[],
+  ): Promise<string> {
+    const payment = recentPayments.find((p) => p.eventId === eventId);
+    if (!payment) {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return "Não achei esse pagamento recente pra estornar.";
+    }
+
+    const state: UndoConfirmState = {
+      kind: "undo_confirm",
+      eventId,
+      description: payment.description,
+    };
+    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return `Confirma desfazer o pagamento de ${payment.description} — ${formatReais(payment.amountCents)}? (sim/não)`;
+  }
+
   private async saveQuestion(
     user: User,
     pending: PendingConversation | null,
@@ -157,7 +259,7 @@ export class MessageHandler {
     cycles: number,
     question: string,
   ): Promise<string> {
-    const state: DraftState = { messages: messages.slice(-MAX_THREAD_MESSAGES), cycles };
+    const state: DraftState = { kind: "draft", messages: messages.slice(-MAX_THREAD_MESSAGES), cycles };
 
     if (pending) {
       await this.pendingRepo.update(pending.id, state as unknown as Record<string, unknown>);
@@ -165,16 +267,29 @@ export class MessageHandler {
       await this.pendingRepo.create({
         userId: user.id,
         stateJson: state as unknown as Record<string, unknown>,
-        expiresAt: new Date(Date.now() + TTL_MS),
+        expiresAt: new Date(Date.now() + DRAFT_TTL_MS),
       });
     }
 
     return cycles === MAX_CYCLES ? question + CYCLE_PAUSE : question;
   }
 
+  private async replacePending(
+    user: User,
+    pending: PendingConversation | null,
+    state: PendingState,
+    ttlMs: number,
+  ): Promise<void> {
+    if (pending) await this.pendingRepo.delete(pending.id);
+    await this.pendingRepo.create({
+      userId: user.id,
+      stateJson: state as unknown as Record<string, unknown>,
+      expiresAt: new Date(Date.now() + ttlMs),
+    });
+  }
+
   private formatConfirmation(input: TransactionInput): string {
-    const reais = (input.amount_cents / 100).toFixed(2).replace(".", ",");
-    const amount = `R$ ${reais}`;
+    const amount = formatReais(input.amount_cents);
     const description = input.description.charAt(0).toUpperCase() + input.description.slice(1);
     const parts = [description, amount].join(" — ");
     const meta: string[] = [];
@@ -185,9 +300,20 @@ export class MessageHandler {
   }
 }
 
+function formatReais(cents: number): string {
+  return `R$ ${(cents / 100).toFixed(2).replace(".", ",")}`;
+}
+
 function commandOf(text: string): string {
   const first = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
   return first.startsWith("/") ? first : "";
+}
+
+function affirmationOf(text: string): "yes" | "no" | null {
+  const clean = text.trim().toLowerCase();
+  if (/^(sim|s|isso|pode|confirmo?|confirma|ok|claro|aham|yes|👍)\b/.test(clean)) return "yes";
+  if (/^(n[ãa]o|n|cancela(r)?|deixa|para|nope|no)\b/.test(clean)) return "no";
+  return null;
 }
 
 function todayInTimeZone(timeZone: string): string {
@@ -199,14 +325,25 @@ function todayInTimeZone(timeZone: string): string {
   }).format(new Date());
 }
 
-function isDraftState(value: unknown): value is DraftState {
+function isPendingState(value: unknown): value is PendingState {
   if (typeof value !== "object" || value === null) return false;
   const state = value as Record<string, unknown>;
-  return (
-    typeof state.cycles === "number" &&
-    Array.isArray(state.messages) &&
-    state.messages.every(isLLMMessage)
-  );
+  if (state.kind === "draft") {
+    return typeof state.cycles === "number" && Array.isArray(state.messages) && state.messages.every(isLLMMessage);
+  }
+  if (state.kind === "payment_confirm") {
+    return isTarget(state.target) && typeof state.description === "string";
+  }
+  if (state.kind === "undo_confirm") {
+    return typeof state.eventId === "number" && typeof state.description === "string";
+  }
+  return false;
+}
+
+function isTarget(value: unknown): value is PaymentTarget {
+  if (typeof value !== "object" || value === null) return false;
+  const target = value as Record<string, unknown>;
+  return (target.type === "transaction" || target.type === "invoice") && typeof target.id === "number";
 }
 
 function isLLMMessage(value: unknown): value is LLMMessage {
