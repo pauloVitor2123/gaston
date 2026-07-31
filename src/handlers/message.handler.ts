@@ -19,6 +19,7 @@ type DraftState = {
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CYCLES = 3;
+const MAX_THREAD_MESSAGES = 12;
 
 const ONBOARDING =
   "Oi! Sou o Gaston, seu assistente financeiro 💸\n\n" +
@@ -156,8 +157,7 @@ export class MessageHandler {
     cycles: number,
     question: string,
   ): Promise<string> {
-    const overflow = cycles >= MAX_CYCLES;
-    const state: DraftState = { messages, cycles: overflow ? 0 : cycles };
+    const state: DraftState = { messages: messages.slice(-MAX_THREAD_MESSAGES), cycles };
 
     if (pending) {
       await this.pendingRepo.update(pending.id, state as unknown as Record<string, unknown>);
@@ -169,7 +169,7 @@ export class MessageHandler {
       });
     }
 
-    return overflow ? question + CYCLE_PAUSE : question;
+    return cycles === MAX_CYCLES ? question + CYCLE_PAUSE : question;
   }
 
   private formatConfirmation(input: TransactionInput): string {

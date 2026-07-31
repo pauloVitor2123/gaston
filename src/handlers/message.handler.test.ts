@@ -189,8 +189,30 @@ describe("MessageHandler.handle", () => {
     expect(repos.pendingRepo.delete).not.toHaveBeenCalled();
     expect(transactionService.persist).not.toHaveBeenCalled();
     const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(updated[1].cycles).toBe(0);
+    expect(updated[1].cycles).toBe(3);
     expect(reply).toContain("guardado");
+  });
+
+  it("caps the stored draft thread so it cannot grow unbounded", async () => {
+    const longThread = Array.from({ length: 20 }, (_, i) => ({
+      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      content: `msg ${i}`,
+    }));
+    const pending = {
+      id: 33,
+      userId: 1,
+      stateJson: { messages: longThread, cycles: 1 },
+      expiresAt: new Date(Date.now() + 60_000),
+    } as unknown as PendingConversation;
+    const { handler, repos } = makeHandler(
+      { kind: "question", text: "Qual o valor?" },
+      { findActiveByUser: () => Promise.resolve(pending) },
+    );
+
+    await handler.handle(100, "ainda não sei", "Test User");
+
+    const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(updated[1].messages.length).toBeLessThanOrEqual(12);
   });
 
   it("auto-registers a new user when not found in DB", async () => {

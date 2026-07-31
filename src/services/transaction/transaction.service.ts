@@ -38,25 +38,25 @@ export class TransactionService {
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
   ) {}
 
-  async persist(result: TransactionInput, userId: number, rawMessage: string): Promise<Transaction> {
-    const accrualDate = toAccrualDate(result.date);
+  async persist(input: TransactionInput, userId: number, rawMessage: string): Promise<Transaction> {
+    const accrualDate = toAccrualDate(input.date);
 
     const [category, card, mantra] = await Promise.all([
-      result.category_name
-        ? this.categoryRepo.findByNameOrSynonym(userId, result.category_name)
+      input.category_name
+        ? this.categoryRepo.findByNameOrSynonym(userId, input.category_name)
         : Promise.resolve(null),
-      result.card_name
-        ? this.cardRepo.findByNameOrAlias(userId, result.card_name)
+      input.card_name
+        ? this.cardRepo.findByNameOrAlias(userId, input.card_name)
         : Promise.resolve(null),
-      result.mantra
-        ? this.mantraRepo.findByName(userId, result.mantra)
+      input.mantra
+        ? this.mantraRepo.findByName(userId, input.mantra)
         : Promise.resolve(null),
     ]);
 
     let cardInvoiceId: number | undefined;
     let dueDate = accrualDate;
 
-    if (result.payment_method === "card" && card) {
+    if (input.payment_method === "card" && card) {
       const period = invoiceFor(accrualDate, card);
       const invoice = await this.cardInvoiceRepo.findOrCreate(
         userId,
@@ -71,12 +71,12 @@ export class TransactionService {
 
     return this.transactionRepo.create({
       userId,
-      direction: result.direction,
-      description: result.description,
-      expectedAmountCents: result.amount_cents,
+      direction: input.direction,
+      description: input.description,
+      expectedAmountCents: input.amount_cents,
       accrualDate,
       dueDate,
-      paymentMethod: result.payment_method ?? "cash",
+      paymentMethod: input.payment_method ?? "cash",
       cardId: card?.id,
       cardInvoiceId,
       categoryId: category?.id,
