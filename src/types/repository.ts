@@ -9,10 +9,12 @@ import type {
   NewCategory,
   NewInstallmentPurchase,
   NewMantra,
+  NewPaymentEvent,
   NewPendingConversation,
   NewRecurringBill,
   NewTransaction,
   NewUser,
+  PaymentEvent,
   PendingConversation,
   RecurringBill,
   Transaction,
@@ -73,4 +75,16 @@ export interface IPendingConversationRepository {
   create(data: NewPendingConversation): Promise<PendingConversation>;
   update(id: number, stateJson: Record<string, unknown>): Promise<PendingConversation>;
   delete(id: number): Promise<void>;
+}
+
+export interface IPaymentEventRepository {
+  create(data: NewPaymentEvent): Promise<PaymentEvent>;
+  findById(userId: number, id: number): Promise<PaymentEvent | null>;
+  listRecentByUser(userId: number, limit: number): Promise<PaymentEvent[]>;
+  listByTarget(
+    userId: number,
+    targetType: PaymentEvent["targetType"],
+    targetId: number,
+  ): Promise<PaymentEvent[]>;
+  void(id: number): Promise<void>;
 }
