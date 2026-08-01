@@ -19,7 +19,8 @@ Core value: instead of filling forms or opening spreadsheets, users write freely
 
 **LLM Stack** (pivoted — see [`docs/pivot-coleta-llm.md`](./docs/pivot-coleta-llm.md))
 
-- **Collection is an AI agent**, not a state machine: a single `CollectionAgent` drives the conversation via native **tool/function-calling**. The LLM either calls the `record_transaction` tool (when it has at least value + description) or replies with a text question. `zod` is the single source of truth — it derives the TS type (`z.infer`), the JSON schema for the tool (`z.toJSONSchema`), and runtime validation.
+- **A multi-tool AI agent**, not a state machine: a single `CollectionAgent` drives the conversation via native **tool/function-calling**. The LLM either calls `record_transaction` (record a lançamento), `mark_paid` (settle a pending target), or `undo_payment` (reverse a payment) — or replies with a text question. `zod` is the single source of truth per tool — it derives the TS type (`z.infer`), the JSON schema for the tool (`z.toJSONSchema`), and runtime validation.
+- **Mutations are always code-confirmed** (see [`docs/mark-as-paid.md`](./docs/mark-as-paid.md)): for `mark_paid`/`undo_payment` the LLM only picks a `target_id`/`event_id` from a list the code injects into context; the handler then runs a deterministic `sim/não` confirmation turn before touching the DB. Payments are a `payment_events` ledger (soft-void) so any payment — including partial invoice payments — can be undone.
 - **Principle: LLM proposes, code disposes.** The model does the "soft" part (interpret free text, decide what's missing, ask); code owns validation and persistence. The final decision to write to the DB is never delegated to the LLM.
 - **Model**: `gpt-4o-mini` (OpenAI, burns paused credits) with `anthropic/claude-3.5-haiku` (OpenRouter) as fallback via `OpenAICompatibleClient` + `LLMProvider`. The `:free` llama model is retired; LLM1/LLM2 are fused into one collection flow.
 - **Strategy**: consume paused credits (OpenAI, OpenRouter) before spending new money.
@@ -44,7 +45,8 @@ All tables are multi-tenant by `user_id` (design for 100+ users from day 1).
 | `installment_purchases` | Parent of a multi-installment buy; generates N `transactions` |
 | `card_invoices` | **Derived entity** (never hand-entered): calculated monthly statement from all card transactions |
 | `transactions` | Central: entries/exits with separate competence (`accrual_date`) and cash (`due_date`) |
-| `pending_conversations` | State for multi-turn clarification (TTL via Cron or `expires_at` check) |
+| `payment_events` | Ledger of payments (soft-void) against a transaction or invoice; source of truth for undo + partial invoice payment |
+| `pending_conversations` | State for multi-turn clarification (TTL via Cron or `expires_at` check); discriminated `kind`: `draft` \| `payment_confirm` \| `undo_confirm` |
 
 **Cash flow rules** (prevent double-counting)
 
@@ -79,7 +81,7 @@ Persist + 1-line confirmation
 - "TotalPass, academia, terapia" → Se Pagar
 - default → Pagas as Contas
 
-**Scope**: only lançamentos (record_expense/income) for now. Queries (balance, invoices, bills) come later.
+**Scope**: lançamentos (record_expense/income) + mark-as-paid/undo (`mark_paid`/`undo_payment`). Installments, recurring bills, and queries (balance panels) come later.
 
 ## Commands (Portuguese UI, English code)
 

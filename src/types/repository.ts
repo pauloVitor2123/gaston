@@ -9,10 +9,12 @@ import type {
   NewCategory,
   NewInstallmentPurchase,
   NewMantra,
+  NewPaymentEvent,
   NewPendingConversation,
   NewRecurringBill,
   NewTransaction,
   NewUser,
+  PaymentEvent,
   PendingConversation,
   RecurringBill,
   Transaction,
@@ -42,10 +44,21 @@ export interface IMantraRepository {
   findByName(userId: number, name: string): Promise<Mantra | null>;
 }
 
+export type TransactionSettlementPatch = Partial<
+  Pick<Transaction, "status" | "actualAmountCents" | "settledAt">
+>;
+
+export type CardInvoiceSettlementPatch = Partial<
+  Pick<CardInvoice, "status" | "paidAmountCents" | "paidAt">
+>;
+
 export interface ITransactionRepository {
   create(data: NewTransaction): Promise<Transaction>;
   findLastByUser(userId: number, limit: number): Promise<Transaction[]>;
   findById(userId: number, id: number): Promise<Transaction | null>;
+  listPayable(userId: number): Promise<Transaction[]>;
+  listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]>;
+  update(userId: number, id: number, patch: TransactionSettlementPatch): Promise<void>;
 }
 
 export interface ICardInvoiceRepository {
@@ -57,6 +70,8 @@ export interface ICardInvoiceRepository {
     dueDate: Date,
   ): Promise<CardInvoice>;
   listOpen(userId: number): Promise<CardInvoice[]>;
+  findById(userId: number, id: number): Promise<CardInvoice | null>;
+  update(userId: number, id: number, patch: CardInvoiceSettlementPatch): Promise<void>;
 }
 
 export interface IInstallmentPurchaseRepository {
@@ -73,4 +88,16 @@ export interface IPendingConversationRepository {
   create(data: NewPendingConversation): Promise<PendingConversation>;
   update(id: number, stateJson: Record<string, unknown>): Promise<PendingConversation>;
   delete(id: number): Promise<void>;
+}
+
+export interface IPaymentEventRepository {
+  create(data: NewPaymentEvent): Promise<PaymentEvent>;
+  findById(userId: number, id: number): Promise<PaymentEvent | null>;
+  listRecentByUser(userId: number, limit: number): Promise<PaymentEvent[]>;
+  listByTarget(
+    userId: number,
+    targetType: PaymentEvent["targetType"],
+    targetId: number,
+  ): Promise<PaymentEvent[]>;
+  void(id: number): Promise<void>;
 }

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { type CardInvoice, cardInvoices } from "@/db/schema";
-import type { ICardInvoiceRepository } from "@/types/repository";
+import type { CardInvoiceSettlementPatch, ICardInvoiceRepository } from "@/types/repository";
 
 export class CardInvoiceRepository implements ICardInvoiceRepository {
   constructor(private readonly db: DrizzleD1Database) {}
@@ -39,5 +39,25 @@ export class CardInvoiceRepository implements ICardInvoiceRepository {
       .select()
       .from(cardInvoices)
       .where(and(eq(cardInvoices.userId, userId), eq(cardInvoices.status, "open")));
+  }
+
+  async findById(userId: number, id: number): Promise<CardInvoice | null> {
+    const [row] = await this.db
+      .select()
+      .from(cardInvoices)
+      .where(and(eq(cardInvoices.id, id), eq(cardInvoices.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async update(
+    userId: number,
+    id: number,
+    patch: CardInvoiceSettlementPatch,
+  ): Promise<void> {
+    await this.db
+      .update(cardInvoices)
+      .set(patch)
+      .where(and(eq(cardInvoices.id, id), eq(cardInvoices.userId, userId)));
   }
 }

@@ -1,7 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { type NewTransaction, type Transaction, transactions } from "@/db/schema";
-import type { ITransactionRepository } from "@/types/repository";
+import type { ITransactionRepository, TransactionSettlementPatch } from "@/types/repository";
 
 export class TransactionRepository implements ITransactionRepository {
   constructor(private readonly db: DrizzleD1Database) {}
@@ -28,5 +28,37 @@ export class TransactionRepository implements ITransactionRepository {
       .where(and(eq(transactions.id, id), eq(transactions.userId, userId)))
       .limit(1);
     return row ?? null;
+  }
+
+  async listPayable(userId: number): Promise<Transaction[]> {
+    return this.db
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.userId, userId),
+          eq(transactions.status, "pending"),
+          ne(transactions.paymentMethod, "card"),
+        ),
+      )
+      .orderBy(transactions.dueDate);
+  }
+
+  async listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]> {
+    return this.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.cardInvoiceId, cardInvoiceId)));
+  }
+
+  async update(
+    userId: number,
+    id: number,
+    patch: TransactionSettlementPatch,
+  ): Promise<void> {
+    await this.db
+      .update(transactions)
+      .set(patch)
+      .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
   }
 }

@@ -55,4 +55,23 @@ describe("CardInvoiceRepository", () => {
     expect(open).toHaveLength(1);
     expect(open[0]?.status).toBe("open");
   });
+
+  it("update flips status/paidAmount and findById scopes by user", async () => {
+    const { repo, userId, cardId } = await setup(5004);
+    const invoice = await repo.findOrCreate(
+      userId,
+      cardId,
+      new Date("2025-04-01"),
+      new Date("2025-04-13"),
+      new Date("2025-04-20"),
+    );
+
+    await repo.update(userId, invoice.id, { status: "paid", paidAmountCents: 5000, paidAt: new Date() });
+
+    const found = await repo.findById(userId, invoice.id);
+    expect(found?.status).toBe("paid");
+    expect(found?.paidAmountCents).toBe(5000);
+    expect(await repo.findById(userId + 999, invoice.id)).toBeNull();
+    expect(await repo.listOpen(userId)).toHaveLength(0);
+  });
 });

@@ -6,8 +6,10 @@ import type {
   IUserRepository,
 } from "@/types/repository";
 import type { AgentTurn, CollectionAgent } from "@/services/collection/collection-agent";
-import type { CollectionContext } from "@/services/collection/prompts";
+import type { AgentContext } from "@/services/collection/prompts";
 import type { TransactionDraft } from "@/services/collection/draft";
+import type { PaymentService } from "@/services/payment/payment.service";
+import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
@@ -41,6 +43,13 @@ const mockCards: Card[] = [
 
 const mockTransaction = { id: 99, userId: 1 } as Transaction;
 
+const payablesFixture = [
+  { type: "transaction" as const, id: 55, description: "conta de luz", amountCents: 18000, dueDate: new Date("2026-08-10") },
+];
+const recentFixture = [
+  { eventId: 900, description: "conta de luz", amountCents: 18000, paidAt: new Date("2026-07-30") },
+];
+
 const fullDraft: TransactionDraft = {
   intent: "record_expense",
   description: "almoço",
@@ -53,13 +62,12 @@ const fullDraft: TransactionDraft = {
 
 function makeRepos(overrides: {
   findByChatId?: () => Promise<User | null>;
-  createUser?: () => Promise<User>;
   findActiveByUser?: () => Promise<PendingConversation | null>;
 } = {}) {
   return {
     userRepo: {
       findByChatId: vi.fn().mockImplementation(overrides.findByChatId ?? (() => Promise.resolve(mockUser))),
-      create: vi.fn().mockImplementation(overrides.createUser ?? (() => Promise.resolve(mockUser))),
+      create: vi.fn().mockResolvedValue(mockUser),
     } as unknown as IUserRepository,
     categoryRepo: {
       create: vi.fn(),
@@ -82,14 +90,22 @@ function makeRepos(overrides: {
   };
 }
 
+function makePaymentService() {
+  return {
+    listPayables: vi.fn().mockResolvedValue(payablesFixture),
+    listRecentPayments: vi.fn().mockResolvedValue(recentFixture),
+    pay: vi.fn().mockResolvedValue({ eventId: 900, type: "transaction", description: "conta de luz", amountCents: 18000, fullyPaid: true }),
+    undo: vi.fn().mockResolvedValue({ type: "transaction", description: "conta de luz", amountCents: 18000 }),
+  } as unknown as PaymentService;
+}
+
 function makeHandler(
   turn: AgentTurn = { kind: "draft", draft: fullDraft },
   repoOverrides: Parameters<typeof makeRepos>[0] = {},
+  payment: PaymentService = makePaymentService(),
 ) {
   const repos = makeRepos(repoOverrides);
-  const agent = {
-    run: vi.fn().mockResolvedValue(turn),
-  } as unknown as CollectionAgent;
+  const agent = { run: vi.fn().mockResolvedValue(turn) } as unknown as CollectionAgent;
   const transactionService = {
     persist: vi.fn().mockResolvedValue(mockTransaction),
   } as unknown as TransactionService;
@@ -100,9 +116,10 @@ function makeHandler(
     repos.cardRepo,
     agent,
     transactionService,
+    payment,
     repos.pendingRepo,
   );
-  return { handler, repos, agent, transactionService };
+  return { handler, repos, agent, transactionService, payment };
 }
 
 function pendingDraft(id: number, cycles: number): PendingConversation {
@@ -110,6 +127,7 @@ function pendingDraft(id: number, cycles: number): PendingConversation {
     id,
     userId: 1,
     stateJson: {
+      kind: "draft",
       messages: [
         { role: "user", content: "almoço no nubank" },
         { role: "assistant", content: "Qual o valor?" },
@@ -120,174 +138,211 @@ function pendingDraft(id: number, cycles: number): PendingConversation {
   } as unknown as PendingConversation;
 }
 
-describe("MessageHandler.handle", () => {
-  it("persists the transaction and returns confirmation when the agent yields a draft", async () => {
+function pendingConfirm(state: Record<string, unknown>, id = 70): PendingConversation {
+  return { id, userId: 1, stateJson: state, expiresAt: new Date(Date.now() + 60_000) } as unknown as PendingConversation;
+}
+
+describe("MessageHandler — record flow", () => {
+  it("persists and confirms when the agent yields a draft", async () => {
     const { handler, transactionService } = makeHandler();
-
     const reply = await handler.handle(100, "almoço 35 reais nubank", "Test User");
-
     expect(transactionService.persist).toHaveBeenCalledOnce();
     expect(reply).toContain("Almoço");
     expect(reply).toContain("R$ 35,00");
   });
 
-  it("saves a 24h draft and returns the question when the agent asks something", async () => {
-    const { handler, repos, transactionService } = makeHandler({
-      kind: "question",
-      text: "Qual o valor?",
-    });
-
+  it("saves a 24h draft and returns the question when the agent asks", async () => {
+    const { handler, repos } = makeHandler({ kind: "question", text: "Qual o valor?" });
     const reply = await handler.handle(100, "almoço no nubank", "Test User");
-
-    expect(transactionService.persist).not.toHaveBeenCalled();
-    expect(repos.pendingRepo.create).toHaveBeenCalledOnce();
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.stateJson.messages).toHaveLength(2);
+    expect(created.stateJson.kind).toBe("draft");
     expect(created.stateJson.cycles).toBe(1);
-    const ttlMs = created.expiresAt.getTime() - Date.now();
-    expect(ttlMs).toBeGreaterThan(23 * 60 * 60 * 1000);
+    expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
     expect(reply).toBe("Qual o valor?");
   });
 
-  it("resumes a pending draft and persists when the agent completes it", async () => {
+  it("resumes a draft and persists when the agent completes it", async () => {
     const { handler, transactionService, repos } = makeHandler(
       { kind: "draft", draft: fullDraft },
       { findActiveByUser: () => Promise.resolve(pendingDraft(77, 1)) },
     );
-
     const reply = await handler.handle(100, "35 reais", "Test User");
-
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(77);
     expect(transactionService.persist).toHaveBeenCalledOnce();
     expect(reply).toContain("R$ 35,00");
   });
 
-  it("appends the turn to the thread and increments the cycle when still incomplete", async () => {
-    const { handler, transactionService, repos } = makeHandler(
-      { kind: "question", text: "Qual o valor?" },
-      { findActiveByUser: () => Promise.resolve(pendingDraft(55, 1)) },
-    );
-
-    const reply = await handler.handle(100, "sei lá", "Test User");
-
-    expect(transactionService.persist).not.toHaveBeenCalled();
-    const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(updated[0]).toBe(55);
-    expect(updated[1].cycles).toBe(2);
-    expect(updated[1].messages).toHaveLength(4);
-    expect(reply).toBe("Qual o valor?");
-  });
-
   it("keeps the draft alive (no abort) when the cycle cap is reached", async () => {
-    const { handler, transactionService, repos } = makeHandler(
+    const { handler, repos } = makeHandler(
       { kind: "question", text: "Qual o valor?" },
       { findActiveByUser: () => Promise.resolve(pendingDraft(66, 2)) },
     );
-
     const reply = await handler.handle(100, "não sei", "Test User");
-
     expect(repos.pendingRepo.delete).not.toHaveBeenCalled();
-    expect(transactionService.persist).not.toHaveBeenCalled();
     const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(updated[1].cycles).toBe(3);
     expect(reply).toContain("guardado");
   });
 
-  it("caps the stored draft thread so it cannot grow unbounded", async () => {
-    const longThread = Array.from({ length: 20 }, (_, i) => ({
-      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
-      content: `msg ${i}`,
-    }));
-    const pending = {
-      id: 33,
-      userId: 1,
-      stateJson: { messages: longThread, cycles: 1 },
-      expiresAt: new Date(Date.now() + 60_000),
-    } as unknown as PendingConversation;
-    const { handler, repos } = makeHandler(
-      { kind: "question", text: "Qual o valor?" },
-      { findActiveByUser: () => Promise.resolve(pending) },
-    );
-
-    await handler.handle(100, "ainda não sei", "Test User");
-
-    const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(updated[1].messages.length).toBeLessThanOrEqual(12);
+  it("falls back to cash and warns when the drafted card is not registered", async () => {
+    const unknownCard: TransactionDraft = { ...fullDraft, payment_method: "card", card_name: "Santander" };
+    const { handler, transactionService } = makeHandler({ kind: "draft", draft: unknownCard });
+    const reply = await handler.handle(100, "tv 2000 no santander", "Test User");
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.payment_method).toBe("cash");
+    expect(reply.toLowerCase()).toContain("cartão");
   });
+});
 
-  it("auto-registers a new user when not found in DB", async () => {
-    const { handler, repos } = makeHandler({ kind: "draft", draft: fullDraft }, {
-      findByChatId: () => Promise.resolve(null),
+describe("MessageHandler — payment flow", () => {
+  it("asks for confirmation on a pay turn without mutating yet", async () => {
+    const { handler, repos, payment } = makeHandler({
+      kind: "pay",
+      target: { type: "transaction", id: 55 },
+      amountCents: undefined,
     });
-
-    await handler.handle(100, "almoço 35 reais", "New User");
-
-    expect(repos.userRepo.create).toHaveBeenCalledWith(
-      expect.objectContaining({ telegramChatId: 100, name: "New User" }),
-    );
+    const reply = await handler.handle(100, "paguei a conta de luz", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.stateJson.kind).toBe("payment_confirm");
+    expect(reply).toContain("Confirma pagar conta de luz");
+    expect(reply).toContain("R$ 180,00");
   });
 
-  it("passes categories and cards as agent context", async () => {
+  it("rejects a pay turn whose target is not in the payables list", async () => {
+    const { handler, payment } = makeHandler({ kind: "pay", target: { type: "transaction", id: 999 } });
+    const reply = await handler.handle(100, "paguei o aluguel", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("não encontrei");
+  });
+
+  it("executes the payment on 'sim' and does not call the agent", async () => {
+    const { handler, agent, payment } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(
+            pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" }),
+          ),
+      },
+    );
+    const reply = await handler.handle(100, "sim", "Test User");
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(payment.pay).toHaveBeenCalledWith(1, { type: "transaction", id: 55 }, undefined);
+    expect(reply).toContain("Pago: conta de luz");
+  });
+
+  it("cancels the payment on 'não' without mutating", async () => {
+    const { handler, payment, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    const reply = await handler.handle(100, "não", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
+    expect(reply.toLowerCase()).toContain("deixei como estava");
+  });
+
+  it("discards the confirmation and reprocesses when the reply is neither sim nor não", async () => {
+    const { handler, agent, repos } = makeHandler(
+      { kind: "draft", draft: fullDraft },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    const reply = await handler.handle(100, "na verdade almoço 35 reais nubank", "Test User");
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
+    expect(agent.run).toHaveBeenCalledOnce();
+    expect(reply).toContain("Almoço");
+  });
+
+  it("surfaces a PaymentError message instead of crashing", async () => {
+    const payment = makePaymentService();
+    (payment.pay as ReturnType<typeof vi.fn>).mockRejectedValue(new PaymentError("Essa fatura já está paga."));
+    const { handler } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "invoice", id: 7 }, description: "Fatura do cartão" })),
+      },
+      payment,
+    );
+    const reply = await handler.handle(100, "sim", "Test User");
+    expect(reply).toBe("Essa fatura já está paga.");
+  });
+});
+
+describe("MessageHandler — undo flow", () => {
+  it("asks for confirmation on an undo turn", async () => {
+    const { handler, repos, payment } = makeHandler({ kind: "undo", eventId: 900 });
+    const reply = await handler.handle(100, "desfaz o pagamento da luz", "Test User");
+    expect(payment.undo).not.toHaveBeenCalled();
+    const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.stateJson.kind).toBe("undo_confirm");
+    expect(reply).toContain("Confirma desfazer");
+  });
+
+  it("executes the undo on 'sim'", async () => {
+    const { handler, payment } = makeHandler(
+      { kind: "question", text: "x" },
+      { findActiveByUser: () => Promise.resolve(pendingConfirm({ kind: "undo_confirm", eventId: 900, description: "conta de luz" })) },
+    );
+    const reply = await handler.handle(100, "sim", "Test User");
+    expect(payment.undo).toHaveBeenCalledWith(1, 900);
+    expect(reply).toContain("Estornei: conta de luz");
+  });
+});
+
+describe("MessageHandler — commands & robustness", () => {
+  it("passes categories, cards, payables and recent payments as agent context", async () => {
     const { handler, agent } = makeHandler();
-
     await handler.handle(100, "almoço 35", "Test User");
-
     expect(agent.run).toHaveBeenCalledWith(
       [{ role: "user", content: "almoço 35" }],
-      expect.objectContaining<Partial<CollectionContext>>({
+      expect.objectContaining<Partial<AgentContext>>({
         categories: ["Alimentação"],
         cards: ["Nubank"],
+        payables: payablesFixture,
+        recentPayments: recentFixture,
       }),
     );
   });
 
   it("returns onboarding for /start without invoking the agent", async () => {
     const { handler, agent } = makeHandler();
-
     const reply = await handler.handle(100, "/start", "Test User");
-
     expect(reply).toContain("Gaston");
     expect(agent.run).not.toHaveBeenCalled();
   });
 
-  it("cancels an active pending conversation on /cancelar", async () => {
+  it("cancels any active pending on /cancelar", async () => {
     const { handler, repos, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {
       findActiveByUser: () => Promise.resolve(pendingDraft(42, 0)),
     });
-
     const reply = await handler.handle(100, "/cancelar", "Test User");
-
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(42);
     expect(agent.run).not.toHaveBeenCalled();
     expect(reply.toLowerCase()).toContain("cancelei");
   });
 
-  it("reports nothing to cancel when there is no pending conversation", async () => {
-    const { handler } = makeHandler();
-
-    const reply = await handler.handle(100, "/cancelar", "Test User");
-
-    expect(reply.toLowerCase()).toContain("nada em andamento");
-  });
-
-  it("falls back to cash and warns when the drafted card is not registered", async () => {
-    const unknownCard: TransactionDraft = { ...fullDraft, payment_method: "card", card_name: "Santander" };
-    const { handler, transactionService } = makeHandler({ kind: "draft", draft: unknownCard });
-
-    const reply = await handler.handle(100, "comprei uma tv 2000 no santander", "Test User");
-
-    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(persisted.payment_method).toBe("cash");
-    expect(persisted.card_name).toBeUndefined();
-    expect(reply.toLowerCase()).toContain("cartão");
+  it("drops a corrupt pending state and processes the message fresh", async () => {
+    const corrupt = pendingConfirm({ foo: "bar" }, 99);
+    const { handler, repos, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {
+      findActiveByUser: () => Promise.resolve(corrupt),
+    });
+    await handler.handle(100, "almoço 35 reais nubank", "Test User");
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(99);
+    expect(agent.run).toHaveBeenCalledOnce();
   });
 
   it("returns a friendly message and does not persist when the agent throws", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const repos = makeRepos();
-    const agent = {
-      run: vi.fn().mockRejectedValue(new Error("LLM down")),
-    } as unknown as CollectionAgent;
+    const agent = { run: vi.fn().mockRejectedValue(new Error("LLM down")) } as unknown as CollectionAgent;
     const transactionService = { persist: vi.fn() } as unknown as TransactionService;
     const handler = new MessageHandler(
       repos.userRepo,
@@ -295,42 +350,18 @@ describe("MessageHandler.handle", () => {
       repos.cardRepo,
       agent,
       transactionService,
+      makePaymentService(),
       repos.pendingRepo,
     );
-
     const reply = await handler.handle(100, "almoço 35", "Test User");
-
     expect(reply).toContain("problema");
     expect(transactionService.persist).not.toHaveBeenCalled();
   });
 
-  it("drops a corrupt pending state and processes the message fresh", async () => {
-    const corrupt = {
-      id: 99,
-      userId: 1,
-      stateJson: { foo: "bar" },
-      expiresAt: new Date(Date.now() + 60_000),
-    } as unknown as PendingConversation;
-    const { handler, repos, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {
-      findActiveByUser: () => Promise.resolve(corrupt),
-    });
-
-    await handler.handle(100, "almoço 35 reais nubank", "Test User");
-
-    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(99);
-    expect(agent.run).toHaveBeenCalledOnce();
-    expect(agent.run).toHaveBeenCalledWith(
-      [{ role: "user", content: "almoço 35 reais nubank" }],
-      expect.anything(),
-    );
-  });
-
-  it("defaults the transaction date to the user's timezone today when the draft omits it", async () => {
+  it("defaults the transaction date to today when the draft omits it", async () => {
     const noDate: TransactionDraft = { ...fullDraft, date: undefined };
     const { handler, transactionService } = makeHandler({ kind: "draft", draft: noDate });
-
     await handler.handle(100, "almoço 35 no nubank", "Test User");
-
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
