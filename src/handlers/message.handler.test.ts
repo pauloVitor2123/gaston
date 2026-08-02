@@ -184,6 +184,23 @@ describe("MessageHandler — record flow", () => {
     expect(reply).toContain("guardado");
   });
 
+  it("passes due_date and already_paid through and flags a future obligation in the reply", async () => {
+    const future: TransactionDraft = {
+      intent: "record_expense",
+      description: "pix pra mãe",
+      amount_cents: 1000,
+      payment_method: "pix",
+      due_date: "2099-12-10",
+      already_paid: false,
+    };
+    const { handler, transactionService } = makeHandler({ kind: "draft", draft: future });
+    const reply = await handler.handle(100, "pix de 10 pra minha mãe dia 10", "Test User");
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.due_date).toBe("2099-12-10");
+    expect(persisted.already_paid).toBe(false);
+    expect(reply).toContain("10/12");
+  });
+
   it("falls back to cash and warns when the drafted card is not registered", async () => {
     const unknownCard: TransactionDraft = { ...fullDraft, payment_method: "card", card_name: "Santander" };
     const { handler, transactionService } = makeHandler({ kind: "draft", draft: unknownCard });

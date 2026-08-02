@@ -14,19 +14,31 @@ export interface TransactionInput {
   description: string;
   amount_cents: number;
   date?: string;
+  due_date?: string;
+  already_paid?: boolean;
   payment_method?: PaymentMethod;
   card_name?: string;
   category_name?: string;
   mantra?: Mantra;
 }
 
-function toAccrualDate(date?: string): Date {
-  if (date) {
-    const [year, month, day] = date.split("-").map(Number) as [number, number, number];
-    return new Date(Date.UTC(year, month - 1, day));
-  }
+function parseUtcDate(date: string): Date {
+  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function todayUtcMidnight(): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+function toAccrualDate(date?: string): Date {
+  return date ? parseUtcDate(date) : todayUtcMidnight();
+}
+
+function settlesOnRecord(alreadyPaid: boolean | undefined, dueDate: Date): boolean {
+  if (alreadyPaid !== undefined) return alreadyPaid;
+  return dueDate.getTime() <= todayUtcMidnight().getTime();
 }
 
 export class TransactionService {
@@ -54,7 +66,10 @@ export class TransactionService {
     ]);
 
     let cardInvoiceId: number | undefined;
-    let dueDate = accrualDate;
+    let dueDate = input.due_date ? parseUtcDate(input.due_date) : accrualDate;
+    let status: Transaction["status"] = "pending";
+    let settledAt: Date | undefined;
+    let actualAmountCents: number | undefined;
 
     if (input.payment_method === "card" && card) {
       const period = invoiceFor(accrualDate, card);
@@ -67,6 +82,10 @@ export class TransactionService {
       );
       cardInvoiceId = invoice.id;
       dueDate = period.due_date;
+    } else if (settlesOnRecord(input.already_paid, dueDate)) {
+      status = "settled";
+      settledAt = new Date();
+      actualAmountCents = input.amount_cents;
     }
 
     return this.transactionRepo.create({
@@ -83,7 +102,9 @@ export class TransactionService {
       mantraId: mantra?.id,
       source: "user",
       rawMessage,
-      status: "pending",
+      status,
+      settledAt,
+      actualAmountCents,
     });
   }
 }

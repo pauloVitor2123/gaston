@@ -48,6 +48,8 @@ Opcionais — só preencha se o usuário informar; só pergunte em ambiguidade r
 - card_name: use apenas um cartão da lista; cartão fora da lista → deixe em branco.
 - category_name: use apenas uma categoria da lista.
 - date: YYYY-MM-DD (padrão: ${context.today}).
+- due_date: YYYY-MM-DD — só para obrigação futura a pagar (ex.: "pix pra mãe dia 10", "boleto vence dia 15").
+- already_paid: false se o usuário ainda não pagou (ex.: "venceu e não paguei"); true ou omitido se já aconteceu/já pagou.
 
 Categorias disponíveis: ${context.categories.join(", ") || "(nenhuma)"}
 Cartões disponíveis: ${context.cards.join(", ") || "(nenhum)"}

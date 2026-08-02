@@ -13,6 +13,11 @@ export const transactionDraftSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  due_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  already_paid: z.boolean().optional(),
 });
 
 export type TransactionDraft = z.infer<typeof transactionDraftSchema>;
@@ -28,6 +33,9 @@ export const RECORD_TRANSACTION_TOOL: ToolDefinition = {
   description:
     "Registra um lançamento financeiro (gasto ou recebimento) do usuário. " +
     "Chame apenas quando tiver ao menos o valor (amount_cents) e a descrição (description). " +
-    "Deixe de fora os campos opcionais que o usuário não informou.",
+    "Deixe de fora os campos opcionais que o usuário não informou. " +
+    "Use due_date (YYYY-MM-DD) quando for uma obrigação futura a pagar (ex.: 'pix pra mãe dia 10'). " +
+    "already_paid=false quando o usuário ainda não pagou (ex.: 'boleto venceu ontem, não paguei'); " +
+    "already_paid=true ou omitido quando já aconteceu/já pagou.",
   parameters: toToolParameters(transactionDraftSchema),
 };

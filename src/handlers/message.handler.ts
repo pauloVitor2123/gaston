@@ -233,6 +233,8 @@ export class MessageHandler {
       description: draft.description,
       amount_cents: draft.amount_cents,
       date: draft.date ?? today,
+      due_date: draft.due_date,
+      already_paid: draft.already_paid,
       payment_method: paymentMethod,
       card_name: matchedCard,
       category_name: draft.category_name,
@@ -332,6 +334,7 @@ export class MessageHandler {
     if (input.category_name) meta.push(`📁 ${input.category_name}`);
     if (input.card_name) meta.push(`💳 ${input.card_name}`);
     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
+    if (isFutureObligation(input)) meta.push(`🗓️ vence ${dayMonthOf(input.due_date!)} (pendente)`);
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
 }
@@ -346,6 +349,19 @@ function affirmationOf(text: string): "yes" | "no" | null {
   if (/^(sim|s|isso|pode|confirmo?|confirma|ok|claro|aham|yes|👍)\b/.test(clean)) return "yes";
   if (/^(n[ãa]o|n|cancela(r)?|deixa|para|nope|no)\b/.test(clean)) return "no";
   return null;
+}
+
+function isFutureObligation(input: TransactionInput): boolean {
+  return (
+    input.already_paid !== true &&
+    input.due_date !== undefined &&
+    input.payment_method !== "card"
+  );
+}
+
+function dayMonthOf(isoDate: string): string {
+  const [, month, day] = isoDate.split("-");
+  return `${day}/${month}`;
 }
 
 function formatDueDate(date: Date): string {
