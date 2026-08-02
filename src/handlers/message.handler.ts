@@ -58,6 +58,7 @@ const ONBOARDING =
 const HELP =
   "🤖 Gaston — o que eu faço\n\n" +
   "Comandos:\n" +
+  "/status — situação do mês (atrasados e a vencer)\n" +
   "/pendentes — o que você ainda tem a pagar\n" +
   "/cancelar — abandona um registro em andamento\n" +
   "/help — mostra esta ajuda\n\n" +
@@ -118,6 +119,7 @@ export class MessageHandler {
     }
     if (command === "/help") return HELP;
     if (command === "/pendentes") return this.listPending(user);
+    if (command === "/status") return this.showStatus(user);
 
     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
     let activePending = pending;
@@ -139,12 +141,27 @@ export class MessageHandler {
     const payables = await this.paymentService.listPayables(user.id);
     if (payables.length === 0) return NO_PENDING;
 
-    const lines = [...payables]
-      .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
-      .map(
-        (p) => `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDueDate(p.dueDate)})`,
-      );
+    const lines = sortByDue(payables).map(payableLine);
     return `📋 Pendentes:\n${lines.join("\n")}`;
+  }
+
+  private async showStatus(user: User): Promise<string> {
+    const payables = await this.paymentService.listPayables(user.id);
+    if (payables.length === 0) return "📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉";
+
+    const todayMs = new Date(`${todayInTimeZone(user.timezone)}T00:00:00.000Z`).getTime();
+    const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
+    const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
+
+    const sections: string[] = [];
+    if (overdue.length) {
+      sections.push(`🔴 Atrasados (${formatReais(sumPayables(overdue))}):\n${overdue.map(payableLine).join("\n")}`);
+    }
+    if (upcoming.length) {
+      sections.push(`🟡 A vencer (${formatReais(sumPayables(upcoming))}):\n${upcoming.map(payableLine).join("\n")}`);
+    }
+
+    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}`;
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -468,6 +485,18 @@ function isFutureObligation(input: TransactionInput): boolean {
 function dayMonthOf(isoDate: string): string {
   const [, month, day] = isoDate.split("-");
   return `${day}/${month}`;
+}
+
+function sortByDue(payables: Payable[]): Payable[] {
+  return [...payables].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+}
+
+function sumPayables(payables: Payable[]): number {
+  return payables.reduce((total, p) => total + p.amountCents, 0);
+}
+
+function payableLine(p: Payable): string {
+  return `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDueDate(p.dueDate)})`;
 }
 
 function formatDueDate(date: Date): string {

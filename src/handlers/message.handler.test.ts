@@ -462,6 +462,30 @@ describe("MessageHandler — commands & robustness", () => {
     expect(reply.toLowerCase()).toContain("nada");
   });
 
+  it("splits payables into overdue and upcoming on /status", async () => {
+    const payment = makePaymentService();
+    (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { type: "transaction", id: 1, description: "conta velha", amountCents: 5000, dueDate: new Date("2020-01-10") },
+      { type: "transaction", id: 2, description: "boleto futuro", amountCents: 30000, dueDate: new Date("2099-12-15") },
+    ]);
+    const { handler, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
+    const reply = await handler.handle(100, "/status", "Test User");
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(reply).toContain("Atrasados");
+    expect(reply).toContain("conta velha");
+    expect(reply).toContain("A vencer");
+    expect(reply).toContain("boleto futuro");
+    expect(reply).toContain("Total em aberto: R$ 350,00");
+  });
+
+  it("shows an all-clear on /status when nothing is open", async () => {
+    const payment = makePaymentService();
+    (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
+    const reply = await handler.handle(100, "/status", "Test User");
+    expect(reply).toContain("em dia");
+  });
+
   it("lists working commands and NL examples on /help without invoking the agent", async () => {
     const { handler, agent } = makeHandler();
     const reply = await handler.handle(100, "/help", "Test User");
