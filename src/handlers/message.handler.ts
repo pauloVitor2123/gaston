@@ -9,7 +9,8 @@ import type { CollectionAgent } from "@/services/collection/collection-agent";
 import type { Direction, TransactionDraft } from "@/services/collection/draft";
 import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
-import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
+import { settlesOnRecord, type TransactionService, type TransactionInput } from "@/services/transaction/transaction.service";
+import { formatDayMonth, parseUtcDate } from "@/services/dates";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
 import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
@@ -149,7 +150,7 @@ export class MessageHandler {
     const payables = await this.paymentService.listPayables(user.id);
     if (payables.length === 0) return "📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉";
 
-    const todayMs = new Date(`${todayInTimeZone(user.timezone)}T00:00:00.000Z`).getTime();
+    const todayMs = parseUtcDate(todayInTimeZone(user.timezone)).getTime();
     const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
     const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
 
@@ -294,7 +295,9 @@ export class MessageHandler {
     };
 
     await this.transactionService.persist(input, user.id, rawMessage);
-    return this.formatConfirmation(input) + warning;
+    const dueDate = parseUtcDate(input.due_date ?? input.date ?? today);
+    const pending = paymentMethod !== "card" && !settlesOnRecord(input.already_paid, dueDate);
+    return this.formatConfirmation(input, pending) + warning;
   }
 
   private async startPaymentConfirm(
@@ -358,11 +361,11 @@ export class MessageHandler {
         mantra: applyMantraRules(bill.description),
       },
       user.id,
-      new Date(`${today}T00:00:00.000Z`),
+      parseUtcDate(today),
     );
     return (
       `🔁 Conta recorrente cadastrada: ${bill.description} — ${formatReais(bill.amount_cents)} ` +
-      `(todo dia ${bill.due_day}). Próximo vencimento ${formatDueDate(firstDueDate)}.`
+      `(todo dia ${bill.due_day}). Próximo vencimento ${formatDayMonth(firstDueDate)}.`
     );
   }
 
@@ -384,7 +387,7 @@ export class MessageHandler {
       const each = formatReais(result.installmentCents);
       return (
         `💳 Parcelado: ${purchase.description} — ${total} em ${purchase.installments_count}x de ${each}\n` +
-        `🗓️ 1ª parcela vence ${formatDueDate(result.firstDueDate)}`
+        `🗓️ 1ª parcela vence ${formatDayMonth(result.firstDueDate)}`
       );
     } catch (error) {
       if (error instanceof InstallmentPurchaseNotAllowedError) return INSTALLMENT_NO_CARD;
@@ -449,7 +452,7 @@ export class MessageHandler {
     });
   }
 
-  private formatConfirmation(input: TransactionInput): string {
+  private formatConfirmation(input: TransactionInput, pending: boolean): string {
     const amount = formatReais(input.amount_cents);
     const description = input.description.charAt(0).toUpperCase() + input.description.slice(1);
     const parts = [description, amount].join(" — ");
@@ -457,7 +460,9 @@ export class MessageHandler {
     if (input.category_name) meta.push(`📁 ${input.category_name}`);
     if (input.card_name) meta.push(`💳 ${input.card_name}`);
     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
-    if (isFutureObligation(input)) meta.push(`🗓️ vence ${dayMonthOf(input.due_date!)} (pendente)`);
+    if (pending) {
+      meta.push(input.due_date ? `🗓️ vence ${formatDayMonth(parseUtcDate(input.due_date))} (pendente)` : "🗓️ pendente");
+    }
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
 }
@@ -474,19 +479,6 @@ function affirmationOf(text: string): "yes" | "no" | null {
   return null;
 }
 
-function isFutureObligation(input: TransactionInput): boolean {
-  return (
-    input.already_paid !== true &&
-    input.due_date !== undefined &&
-    input.payment_method !== "card"
-  );
-}
-
-function dayMonthOf(isoDate: string): string {
-  const [, month, day] = isoDate.split("-");
-  return `${day}/${month}`;
-}
-
 function sortByDue(payables: Payable[]): Payable[] {
   return [...payables].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
 }
@@ -496,13 +488,7 @@ function sumPayables(payables: Payable[]): number {
 }
 
 function payableLine(p: Payable): string {
-  return `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDueDate(p.dueDate)})`;
-}
-
-function formatDueDate(date: Date): string {
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${day}/${month}`;
+  return `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDayMonth(p.dueDate)})`;
 }
 
 function todayInTimeZone(timeZone: string): string {

@@ -9,7 +9,8 @@ import type {
 import type { Mantra } from "@/services/collection/draft";
 import type { InstallmentPurchase } from "@/db/schema";
 import { invoiceFor } from "@/services/invoice/invoice";
-import { addMonthsUtc, splitAmountCents } from "@/services/installment/installments";
+import { splitAmountCents } from "@/services/installment/installments";
+import { addMonthsUtc, parseUtcDate, todayUtcMidnight } from "@/services/dates";
 
 export interface InstallmentInput {
   description: string;
@@ -29,15 +30,6 @@ export interface InstallmentResult {
 
 export class InstallmentPurchaseNotAllowedError extends Error {}
 
-function parseUtcDate(date?: string): Date {
-  if (!date) {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  }
-  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
 export class InstallmentService {
   constructor(
     private readonly categoryRepo: ICategoryRepository,
@@ -49,7 +41,7 @@ export class InstallmentService {
   ) {}
 
   async create(input: InstallmentInput, userId: number): Promise<InstallmentResult> {
-    const purchaseDate = parseUtcDate(input.date);
+    const purchaseDate = input.date ? parseUtcDate(input.date) : todayUtcMidnight();
     const [category, card, mantra] = await Promise.all([
       input.category_name
         ? this.categoryRepo.findByNameOrSynonym(userId, input.category_name)

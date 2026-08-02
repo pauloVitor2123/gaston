@@ -8,6 +8,7 @@ import type {
 import type { Direction, Mantra, PaymentMethod } from "@/services/collection/draft";
 import type { Transaction } from "@/db/schema";
 import { invoiceFor } from "@/services/invoice/invoice";
+import { parseUtcDate, todayUtcMidnight } from "@/services/dates";
 
 export interface TransactionInput {
   direction: Direction;
@@ -22,21 +23,11 @@ export interface TransactionInput {
   mantra?: Mantra;
 }
 
-function parseUtcDate(date: string): Date {
-  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function todayUtcMidnight(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
-
 function toAccrualDate(date?: string): Date {
   return date ? parseUtcDate(date) : todayUtcMidnight();
 }
 
-function settlesOnRecord(alreadyPaid: boolean | undefined, dueDate: Date): boolean {
+export function settlesOnRecord(alreadyPaid: boolean | undefined, dueDate: Date): boolean {
   if (alreadyPaid !== undefined) return alreadyPaid;
   return dueDate.getTime() <= todayUtcMidnight().getTime();
 }

@@ -225,6 +225,19 @@ describe("MessageHandler — record flow", () => {
     expect(reply).toContain("10/12");
   });
 
+  it("flags a pending obligation with no due date when the user hasn't paid yet", async () => {
+    const unpaidNoDate: TransactionDraft = {
+      intent: "record_expense",
+      description: "boleto da luz",
+      amount_cents: 15000,
+      payment_method: "pix",
+      already_paid: false,
+    };
+    const { handler } = makeHandler({ kind: "draft", draft: unpaidNoDate });
+    const reply = await handler.handle(100, "boleto da luz 150, não paguei ainda", "Test User");
+    expect(reply).toContain("pendente");
+  });
+
   it("falls back to cash and warns when the drafted card is not registered", async () => {
     const unknownCard: TransactionDraft = { ...fullDraft, payment_method: "card", card_name: "Santander" };
     const { handler, transactionService } = makeHandler({ kind: "draft", draft: unknownCard });
