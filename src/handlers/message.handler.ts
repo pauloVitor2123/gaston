@@ -12,6 +12,8 @@ import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
+import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
+import type { RecordInstallmentArgs } from "@/services/installment/tools";
 import type { PendingConversation, RecurringBill, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
@@ -44,6 +46,7 @@ const EXAMPLES =
   '• "recebi 2000 de salário"\n' +
   '• "pix de 300 pra minha mãe dia 10"\n' +
   '• "boleto da internet 299 todo dia 15"\n' +
+  '• "máquina de lavar 3668 em 5x no nubank"\n' +
   '• "paguei a conta de luz"';
 
 const ONBOARDING =
@@ -63,6 +66,9 @@ const HELP =
 
 const NO_PENDING = "Você não tem nada em aberto. 🎉";
 
+const INSTALLMENT_NO_CARD =
+  "Pra registrar uma compra parcelada preciso saber o cartão. Cadastre-o com /cartao e tente de novo.";
+
 const GENERIC_ERROR =
   "Tive um problema para processar isso agora 😕. Pode tentar de novo em instantes?";
 
@@ -81,6 +87,7 @@ export class MessageHandler {
     private readonly transactionService: TransactionService,
     private readonly paymentService: PaymentService,
     private readonly recurringService: RecurringBillService,
+    private readonly installmentService: InstallmentService,
     private readonly pendingRepo: IPendingConversationRepository,
   ) {}
 
@@ -227,6 +234,10 @@ export class MessageHandler {
     if (turn.kind === "delete_recurring") {
       return this.startDeleteRecurringConfirm(user, pending, turn.billId, recurringBills);
     }
+    if (turn.kind === "installment") {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return this.recordInstallment(turn.purchase, user);
+    }
 
     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
     const cycles = (draft?.cycles ?? 0) + 1;
@@ -336,6 +347,32 @@ export class MessageHandler {
       `🔁 Conta recorrente cadastrada: ${bill.description} — ${formatReais(bill.amount_cents)} ` +
       `(todo dia ${bill.due_day}). Próximo vencimento ${formatDueDate(firstDueDate)}.`
     );
+  }
+
+  private async recordInstallment(purchase: RecordInstallmentArgs, user: User): Promise<string> {
+    try {
+      const result = await this.installmentService.create(
+        {
+          description: purchase.description,
+          total_amount_cents: purchase.total_amount_cents,
+          installments_count: purchase.installments_count,
+          card_name: purchase.card_name,
+          category_name: purchase.category_name,
+          mantra: applyMantraRules(purchase.description),
+          date: purchase.date,
+        },
+        user.id,
+      );
+      const total = formatReais(purchase.total_amount_cents);
+      const each = formatReais(result.installmentCents);
+      return (
+        `💳 Parcelado: ${purchase.description} — ${total} em ${purchase.installments_count}x de ${each}\n` +
+        `🗓️ 1ª parcela vence ${formatDueDate(result.firstDueDate)}`
+      );
+    } catch (error) {
+      if (error instanceof InstallmentPurchaseNotAllowedError) return INSTALLMENT_NO_CARD;
+      throw error;
+    }
   }
 
   private async startDeleteRecurringConfirm(

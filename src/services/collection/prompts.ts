@@ -50,6 +50,7 @@ Escolha a ação a cada turno:
 - Desfazer/estornar um pagamento → ferramenta undo_payment com um event_id da lista "Pagamentos recentes".
 - Cadastrar conta mensal recorrente (boleto fixo, assinatura) → ferramenta record_recurring_bill.
 - Cancelar uma conta recorrente → ferramenta delete_recurring_bill com um bill_id da lista "Contas recorrentes".
+- Compra parcelada no cartão ('em 5x', 'parcelado') → ferramenta record_installment_purchase (total_amount_cents é o valor total).
 - Se faltar informação ou nada casar com a lista, responda em texto com UMA pergunta curta. Não chame ferramenta.
 
 Nunca invente ids. Use apenas os ids das listas abaixo. Trate um pedido por vez.

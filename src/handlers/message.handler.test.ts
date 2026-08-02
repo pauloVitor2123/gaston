@@ -12,6 +12,7 @@ import type { PaymentService } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
+import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
 
@@ -108,11 +109,22 @@ function makeRecurringService() {
   } as unknown as RecurringBillService;
 }
 
+function makeInstallmentService() {
+  return {
+    create: vi.fn().mockResolvedValue({
+      purchase: { id: 500 },
+      installmentCents: 73360,
+      firstDueDate: new Date(Date.UTC(2026, 2, 20)),
+    }),
+  } as unknown as InstallmentService;
+}
+
 function makeHandler(
   turn: AgentTurn = { kind: "draft", draft: fullDraft },
   repoOverrides: Parameters<typeof makeRepos>[0] = {},
   payment: PaymentService = makePaymentService(),
   recurring: RecurringBillService = makeRecurringService(),
+  installment: InstallmentService = makeInstallmentService(),
 ) {
   const repos = makeRepos(repoOverrides);
   const agent = { run: vi.fn().mockResolvedValue(turn) } as unknown as CollectionAgent;
@@ -128,9 +140,10 @@ function makeHandler(
     transactionService,
     payment,
     recurring,
+    installment,
     repos.pendingRepo,
   );
-  return { handler, repos, agent, transactionService, payment, recurring };
+  return { handler, repos, agent, transactionService, payment, recurring, installment };
 }
 
 function pendingDraft(id: number, cycles: number): PendingConversation {
@@ -377,6 +390,38 @@ describe("MessageHandler — recurring flow", () => {
   });
 });
 
+describe("MessageHandler — installment flow", () => {
+  const installmentTurn: AgentTurn = {
+    kind: "installment",
+    purchase: {
+      description: "Máquina de lavar",
+      total_amount_cents: 366800,
+      installments_count: 5,
+      card_name: "Nubank",
+    },
+  };
+
+  it("records an installment purchase and reports the plan", async () => {
+    const installment = makeInstallmentService();
+    const { handler } = makeHandler(installmentTurn, {}, makePaymentService(), makeRecurringService(), installment);
+    const reply = await handler.handle(100, "máquina de lavar 3668 em 5x no nubank", "Test User");
+    expect(installment.create).toHaveBeenCalledOnce();
+    expect(reply).toContain("5x");
+    expect(reply).toContain("R$ 3668,00");
+    expect(reply).toContain("20/03");
+  });
+
+  it("warns to register a card when the installment card is unknown", async () => {
+    const installment = makeInstallmentService();
+    (installment.create as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new InstallmentPurchaseNotAllowedError("card not found"),
+    );
+    const { handler } = makeHandler(installmentTurn, {}, makePaymentService(), makeRecurringService(), installment);
+    const reply = await handler.handle(100, "tv 2000 em 10x no santander", "Test User");
+    expect(reply.toLowerCase()).toContain("cartão");
+  });
+});
+
 describe("MessageHandler — commands & robustness", () => {
   it("passes categories, cards, payables and recent payments as agent context", async () => {
     const { handler, agent } = makeHandler();
@@ -459,6 +504,7 @@ describe("MessageHandler — commands & robustness", () => {
       transactionService,
       makePaymentService(),
       makeRecurringService(),
+      makeInstallmentService(),
       repos.pendingRepo,
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");

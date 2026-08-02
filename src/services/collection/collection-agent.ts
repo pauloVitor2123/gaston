@@ -15,6 +15,11 @@ import {
   recordRecurringBillArgsSchema,
   type RecordRecurringBillArgs,
 } from "@/services/recurring/tools";
+import {
+  RECORD_INSTALLMENT_TOOL,
+  recordInstallmentArgsSchema,
+  type RecordInstallmentArgs,
+} from "@/services/installment/tools";
 
 export type AgentTurn =
   | { kind: "draft"; draft: TransactionDraft }
@@ -22,6 +27,7 @@ export type AgentTurn =
   | { kind: "undo"; eventId: number }
   | { kind: "recurring"; bill: RecordRecurringBillArgs }
   | { kind: "delete_recurring"; billId: number }
+  | { kind: "installment"; purchase: RecordInstallmentArgs }
   | { kind: "question"; text: string };
 
 const TOOLS = [
@@ -30,6 +36,7 @@ const TOOLS = [
   UNDO_PAYMENT_TOOL,
   RECORD_RECURRING_BILL_TOOL,
   DELETE_RECURRING_BILL_TOOL,
+  RECORD_INSTALLMENT_TOOL,
 ];
 const FALLBACK_QUESTION = "Me conta o valor e o que foi, por favor.";
 
@@ -69,6 +76,11 @@ export class CollectionAgent {
     if (toolCall?.name === DELETE_RECURRING_BILL_TOOL.name) {
       const parsed = deleteRecurringBillArgsSchema.safeParse(toolCall.arguments);
       if (parsed.success) return { kind: "delete_recurring", billId: parsed.data.bill_id };
+    }
+
+    if (toolCall?.name === RECORD_INSTALLMENT_TOOL.name) {
+      const parsed = recordInstallmentArgsSchema.safeParse(toolCall.arguments);
+      if (parsed.success) return { kind: "installment", purchase: parsed.data };
     }
 
     return { kind: "question", text: content?.trim() || FALLBACK_QUESTION };
