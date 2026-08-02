@@ -31,12 +31,27 @@ const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
 const RECENT_PAYMENTS_LIMIT = 5;
 
+const EXAMPLES =
+  '• "almoço 35 no nubank"\n' +
+  '• "recebi 2000 de salário"\n' +
+  '• "paguei a conta de luz"';
+
 const ONBOARDING =
   "Oi! Sou o Gaston, seu assistente financeiro 💸\n\n" +
   "Me conte seus gastos e recebimentos em linguagem natural, por exemplo:\n" +
-  '• "almoço 35 no nubank"\n' +
-  '• "recebi 2000 de salário"\n\n' +
-  "Para abandonar um registro em andamento, mande /cancelar.";
+  EXAMPLES +
+  "\n\nMande /help pra ver tudo que eu faço.";
+
+const HELP =
+  "🤖 Gaston — o que eu faço\n\n" +
+  "Comandos:\n" +
+  "/pendentes — o que você ainda tem a pagar\n" +
+  "/cancelar — abandona um registro em andamento\n" +
+  "/help — mostra esta ajuda\n\n" +
+  "Ou é só me escrever naturalmente:\n" +
+  EXAMPLES;
+
+const NO_PENDING = "Você não tem nada em aberto. 🎉";
 
 const GENERIC_ERROR =
   "Tive um problema para processar isso agora 😕. Pode tentar de novo em instantes?";
@@ -62,7 +77,8 @@ export class MessageHandler {
     try {
       return await this.route(chatId, text, senderName);
     } catch (error) {
-      console.error("MessageHandler.handle failed", error);
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`MessageHandler.handle failed: ${detail}`, error);
       return GENERIC_ERROR;
     }
   }
@@ -82,6 +98,8 @@ export class MessageHandler {
         ? "Ok, cancelei o que estava em andamento. 👍"
         : "Não há nada em andamento para cancelar.";
     }
+    if (command === "/help") return HELP;
+    if (command === "/pendentes") return this.listPending(user);
 
     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
     let activePending = pending;
@@ -97,6 +115,18 @@ export class MessageHandler {
     }
 
     return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending);
+  }
+
+  private async listPending(user: User): Promise<string> {
+    const payables = await this.paymentService.listPayables(user.id);
+    if (payables.length === 0) return NO_PENDING;
+
+    const lines = [...payables]
+      .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
+      .map(
+        (p) => `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDueDate(p.dueDate)})`,
+      );
+    return `📋 Pendentes:\n${lines.join("\n")}`;
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -316,6 +346,12 @@ function affirmationOf(text: string): "yes" | "no" | null {
   if (/^(sim|s|isso|pode|confirmo?|confirma|ok|claro|aham|yes|👍)\b/.test(clean)) return "yes";
   if (/^(n[ãa]o|n|cancela(r)?|deixa|para|nope|no)\b/.test(clean)) return "no";
   return null;
+}
+
+function formatDueDate(date: Date): string {
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${day}/${month}`;
 }
 
 function todayInTimeZone(timeZone: string): string {

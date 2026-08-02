@@ -319,6 +319,33 @@ describe("MessageHandler — commands & robustness", () => {
     expect(agent.run).not.toHaveBeenCalled();
   });
 
+  it("lists open payables on /pendentes without invoking the agent", async () => {
+    const { handler, agent, payment } = makeHandler();
+    const reply = await handler.handle(100, "/pendentes", "Test User");
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(payment.listPayables).toHaveBeenCalledWith(1);
+    expect(reply).toContain("conta de luz");
+    expect(reply).toContain("R$ 180,00");
+    expect(reply).toContain("10/08");
+  });
+
+  it("shows a friendly message on /pendentes when nothing is open", async () => {
+    const payment = makePaymentService();
+    (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
+    const reply = await handler.handle(100, "/pendentes", "Test User");
+    expect(reply.toLowerCase()).toContain("nada");
+  });
+
+  it("lists working commands and NL examples on /help without invoking the agent", async () => {
+    const { handler, agent } = makeHandler();
+    const reply = await handler.handle(100, "/help", "Test User");
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(reply).toContain("/pendentes");
+    expect(reply).toContain("/cancelar");
+    expect(reply).toContain("almoço");
+  });
+
   it("cancels any active pending on /cancelar", async () => {
     const { handler, repos, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {
       findActiveByUser: () => Promise.resolve(pendingDraft(42, 0)),
