@@ -1,4 +1,5 @@
 import type { Payable, RecentPayment } from "@/services/payment/payment.service";
+import type { RecurringBill } from "@/db/schema";
 import { formatReais } from "@/services/money";
 
 export interface AgentContext {
@@ -7,6 +8,7 @@ export interface AgentContext {
   today: string;
   payables: Payable[];
   recentPayments: RecentPayment[];
+  recurringBills: RecurringBill[];
 }
 
 function formatDay(date: Date): string {
@@ -29,6 +31,14 @@ function recentPaymentsBlock(payments: RecentPayment[]): string {
   return `Pagamentos recentes (use o event_id em undo_payment):\n${lines.join("\n")}`;
 }
 
+function recurringBillsBlock(bills: RecurringBill[]): string {
+  if (bills.length === 0) return "Contas recorrentes: (nenhuma)";
+  const lines = bills.map(
+    (b) => `- [#${b.id}] ${b.description} — ${formatReais(b.expectedAmountCents)} (todo dia ${b.dueDay})`,
+  );
+  return `Contas recorrentes (use o bill_id em delete_recurring_bill):\n${lines.join("\n")}`;
+}
+
 export function buildCollectionSystemPrompt(context: AgentContext): string {
   return `Você é o Gaston, assistente financeiro pessoal, falando em português. Você pode: registrar lançamentos, marcar pendentes como pagos e desfazer pagamentos.
 
@@ -38,6 +48,8 @@ Escolha a ação a cada turno:
 - Registrar gasto/recebimento → ferramenta record_transaction (só quando tiver valor e descrição).
 - Pagar um pendente → ferramenta mark_paid com um target_id da lista "Pendentes".
 - Desfazer/estornar um pagamento → ferramenta undo_payment com um event_id da lista "Pagamentos recentes".
+- Cadastrar conta mensal recorrente (boleto fixo, assinatura) → ferramenta record_recurring_bill.
+- Cancelar uma conta recorrente → ferramenta delete_recurring_bill com um bill_id da lista "Contas recorrentes".
 - Se faltar informação ou nada casar com a lista, responda em texto com UMA pergunta curta. Não chame ferramenta.
 
 Nunca invente ids. Use apenas os ids das listas abaixo. Trate um pedido por vez.
@@ -57,5 +69,7 @@ Data de hoje: ${context.today}.
 
 ${payablesBlock(context.payables)}
 
-${recentPaymentsBlock(context.recentPayments)}`;
+${recentPaymentsBlock(context.recentPayments)}
+
+${recurringBillsBlock(context.recurringBills)}`;
 }

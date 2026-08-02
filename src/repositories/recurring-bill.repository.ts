@@ -18,4 +18,19 @@ export class RecurringBillRepository implements IRecurringBillRepository {
       .from(recurringBills)
       .where(and(eq(recurringBills.userId, userId), eq(recurringBills.isActive, true)));
   }
+
+  async findById(userId: number, id: number): Promise<RecurringBill | null> {
+    const [row] = await this.db
+      .select()
+      .from(recurringBills)
+      .where(and(eq(recurringBills.userId, userId), eq(recurringBills.id, id)));
+    return row ?? null;
+  }
+
+  async deactivate(userId: number, id: number): Promise<void> {
+    await this.db
+      .update(recurringBills)
+      .set({ isActive: false })
+      .where(and(eq(recurringBills.userId, userId), eq(recurringBills.id, id)));
+  }
 }

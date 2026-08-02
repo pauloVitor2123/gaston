@@ -51,6 +51,14 @@ export class TransactionRepository implements ITransactionRepository {
       .where(and(eq(transactions.userId, userId), eq(transactions.cardInvoiceId, cardInvoiceId)));
   }
 
+  async listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]> {
+    return this.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.recurringBillId, recurringBillId)))
+      .orderBy(transactions.dueDate);
+  }
+
   async update(
     userId: number,
     id: number,

@@ -58,6 +58,7 @@ export interface ITransactionRepository {
   findById(userId: number, id: number): Promise<Transaction | null>;
   listPayable(userId: number): Promise<Transaction[]>;
   listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]>;
+  listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]>;
   update(userId: number, id: number, patch: TransactionSettlementPatch): Promise<void>;
 }
 
@@ -81,6 +82,8 @@ export interface IInstallmentPurchaseRepository {
 export interface IRecurringBillRepository {
   create(data: NewRecurringBill): Promise<RecurringBill>;
   listActive(userId: number): Promise<RecurringBill[]>;
+  findById(userId: number, id: number): Promise<RecurringBill | null>;
+  deactivate(userId: number, id: number): Promise<void>;
 }
 
 export interface IPendingConversationRepository {

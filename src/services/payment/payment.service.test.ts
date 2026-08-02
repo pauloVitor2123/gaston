@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ICardInvoiceRepository,
   IPaymentEventRepository,
+  IRecurringBillRepository,
   ITransactionRepository,
 } from "@/types/repository";
-import type { CardInvoice, PaymentEvent, Transaction } from "@/db/schema";
+import type { CardInvoice, PaymentEvent, RecurringBill, Transaction } from "@/db/schema";
 import { PaymentService } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 
@@ -42,6 +43,8 @@ function makeRepos(overrides: {
   invFindById?: () => Promise<CardInvoice | null>;
   listByTarget?: () => Promise<PaymentEvent[]>;
   eventFindById?: () => Promise<PaymentEvent | null>;
+  listByRecurringBill?: () => Promise<Transaction[]>;
+  recurringFindById?: () => Promise<RecurringBill | null>;
 } = {}) {
   const transactionRepo = {
     create: vi.fn(),
@@ -49,6 +52,7 @@ function makeRepos(overrides: {
     findById: vi.fn().mockImplementation(overrides.txFindById ?? (() => Promise.resolve(pendingBill))),
     listPayable: vi.fn().mockImplementation(overrides.listPayable ?? (() => Promise.resolve([pendingBill]))),
     listByInvoice: vi.fn().mockImplementation(overrides.listByInvoice ?? (() => Promise.resolve(invoiceChildren))),
+    listByRecurringBill: vi.fn().mockImplementation(overrides.listByRecurringBill ?? (() => Promise.resolve([]))),
     update: vi.fn().mockResolvedValue(undefined),
   } as unknown as ITransactionRepository;
 
@@ -67,7 +71,14 @@ function makeRepos(overrides: {
     void: vi.fn().mockResolvedValue(undefined),
   } as unknown as IPaymentEventRepository;
 
-  return { transactionRepo, cardInvoiceRepo, paymentEventRepo };
+  const recurringBillRepo = {
+    create: vi.fn(),
+    listActive: vi.fn(),
+    findById: vi.fn().mockImplementation(overrides.recurringFindById ?? (() => Promise.resolve(null))),
+    deactivate: vi.fn(),
+  } as unknown as IRecurringBillRepository;
+
+  return { transactionRepo, cardInvoiceRepo, paymentEventRepo, recurringBillRepo };
 }
 
 function makeService(overrides: Parameters<typeof makeRepos>[0] = {}) {
@@ -76,6 +87,7 @@ function makeService(overrides: Parameters<typeof makeRepos>[0] = {}) {
     repos.transactionRepo,
     repos.cardInvoiceRepo,
     repos.paymentEventRepo,
+    repos.recurringBillRepo,
   );
   return { service, repos };
 }
@@ -216,5 +228,80 @@ describe("PaymentService.undo", () => {
         Promise.resolve({ id: 902, userId, targetType: "transaction", targetId: 55, amountCents: 1, voidedAt: new Date() } as PaymentEvent),
     });
     await expect(service.undo(userId, 902)).rejects.toBeInstanceOf(PaymentError);
+  });
+});
+
+const recurringTx = {
+  id: 55,
+  userId,
+  description: "Internet",
+  expectedAmountCents: 29900,
+  status: "pending",
+  paymentMethod: "pix",
+  dueDate: new Date(Date.UTC(2026, 7, 15)),
+  source: "recurring",
+  recurringBillId: 9,
+} as Transaction;
+
+const activeBill = { id: 9, userId, dueDay: 15, isActive: true } as RecurringBill;
+
+describe("PaymentService — recurring chain", () => {
+  it("materializes next month's occurrence when a recurring bill is paid", async () => {
+    const { service, repos } = makeService({
+      txFindById: () => Promise.resolve(recurringTx),
+      recurringFindById: () => Promise.resolve(activeBill),
+      listByRecurringBill: () => Promise.resolve([recurringTx]),
+    });
+
+    await service.pay(userId, { type: "transaction", id: 55 });
+
+    const [created] = patchOf(repos.transactionRepo.create);
+    expect(created).toMatchObject({
+      source: "recurring",
+      recurringBillId: 9,
+      status: "pending",
+      dueDate: new Date(Date.UTC(2026, 8, 15)),
+    });
+  });
+
+  it("does not materialize a second occurrence if one already exists", async () => {
+    const nextTx = { ...recurringTx, id: 56, dueDate: new Date(Date.UTC(2026, 8, 15)) } as Transaction;
+    const { service, repos } = makeService({
+      txFindById: () => Promise.resolve(recurringTx),
+      recurringFindById: () => Promise.resolve(activeBill),
+      listByRecurringBill: () => Promise.resolve([recurringTx, nextTx]),
+    });
+
+    await service.pay(userId, { type: "transaction", id: 55 });
+
+    expect(repos.transactionRepo.create).not.toHaveBeenCalled();
+  });
+
+  it("cancels the spawned next occurrence when undoing a recurring payment", async () => {
+    const nextTx = { ...recurringTx, id: 56, status: "pending", dueDate: new Date(Date.UTC(2026, 8, 15)) } as Transaction;
+    const { service, repos } = makeService({
+      txFindById: () => Promise.resolve(recurringTx),
+      listByRecurringBill: () => Promise.resolve([recurringTx, nextTx]),
+      eventFindById: () =>
+        Promise.resolve({ id: 903, userId, targetType: "transaction", targetId: 55, amountCents: 29900, voidedAt: null } as PaymentEvent),
+    });
+
+    await service.undo(userId, 903);
+
+    expect(repos.transactionRepo.update).toHaveBeenCalledWith(userId, 56, { status: "cancelled" });
+    expect(repos.transactionRepo.update).toHaveBeenCalledWith(userId, 55, expect.objectContaining({ status: "pending" }));
+  });
+
+  it("refuses to undo a recurring payment when a later month is already paid", async () => {
+    const paidNext = { ...recurringTx, id: 56, status: "settled", dueDate: new Date(Date.UTC(2026, 8, 15)) } as Transaction;
+    const { service, repos } = makeService({
+      txFindById: () => Promise.resolve(recurringTx),
+      listByRecurringBill: () => Promise.resolve([recurringTx, paidNext]),
+      eventFindById: () =>
+        Promise.resolve({ id: 904, userId, targetType: "transaction", targetId: 55, amountCents: 29900, voidedAt: null } as PaymentEvent),
+    });
+
+    await expect(service.undo(userId, 904)).rejects.toBeInstanceOf(PaymentError);
+    expect(repos.paymentEventRepo.void).not.toHaveBeenCalled();
   });
 });

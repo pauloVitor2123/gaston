@@ -11,6 +11,7 @@ import type { TransactionDraft } from "@/services/collection/draft";
 import type { PaymentService } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService } from "@/services/transaction/transaction.service";
+import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
 
@@ -99,10 +100,19 @@ function makePaymentService() {
   } as unknown as PaymentService;
 }
 
+function makeRecurringService() {
+  return {
+    listActive: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue({ bill: { id: 3 }, firstDueDate: new Date("2026-08-15") }),
+    delete: vi.fn().mockResolvedValue(undefined),
+  } as unknown as RecurringBillService;
+}
+
 function makeHandler(
   turn: AgentTurn = { kind: "draft", draft: fullDraft },
   repoOverrides: Parameters<typeof makeRepos>[0] = {},
   payment: PaymentService = makePaymentService(),
+  recurring: RecurringBillService = makeRecurringService(),
 ) {
   const repos = makeRepos(repoOverrides);
   const agent = { run: vi.fn().mockResolvedValue(turn) } as unknown as CollectionAgent;
@@ -117,9 +127,10 @@ function makeHandler(
     agent,
     transactionService,
     payment,
+    recurring,
     repos.pendingRepo,
   );
-  return { handler, repos, agent, transactionService, payment };
+  return { handler, repos, agent, transactionService, payment, recurring };
 }
 
 function pendingDraft(id: number, cycles: number): PendingConversation {
@@ -314,6 +325,58 @@ describe("MessageHandler — undo flow", () => {
   });
 });
 
+describe("MessageHandler — recurring flow", () => {
+  const recurringTurn: AgentTurn = {
+    kind: "recurring",
+    bill: { description: "Internet", amount_cents: 29900, due_day: 15, payment_method: "pix" },
+  };
+
+  it("registers a recurring bill and reports the next due date", async () => {
+    const recurring = makeRecurringService();
+    const { handler } = makeHandler(recurringTurn, {}, makePaymentService(), recurring);
+    const reply = await handler.handle(100, "boleto internet 299 todo dia 15", "Test User");
+    expect(recurring.create).toHaveBeenCalledOnce();
+    expect(reply).toContain("Internet");
+    expect(reply).toContain("15/08");
+  });
+
+  it("asks confirmation before deleting a recurring bill", async () => {
+    const recurring = makeRecurringService();
+    (recurring.listActive as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 3, description: "Netflix", expectedAmountCents: 5590 },
+    ]);
+    const { handler, repos } = makeHandler(
+      { kind: "delete_recurring", billId: 3 },
+      {},
+      makePaymentService(),
+      recurring,
+    );
+    const reply = await handler.handle(100, "cancela a netflix", "Test User");
+    expect(recurring.delete).not.toHaveBeenCalled();
+    const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.stateJson.kind).toBe("delete_recurring_confirm");
+    expect(reply).toContain("Confirma cancelar");
+  });
+
+  it("deletes the recurring bill on 'sim'", async () => {
+    const recurring = makeRecurringService();
+    const { handler } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(
+            pendingConfirm({ kind: "delete_recurring_confirm", billId: 3, description: "Netflix" }),
+          ),
+      },
+      makePaymentService(),
+      recurring,
+    );
+    const reply = await handler.handle(100, "sim", "Test User");
+    expect(recurring.delete).toHaveBeenCalledWith(1, 3);
+    expect(reply).toContain("Cancelei a conta recorrente");
+  });
+});
+
 describe("MessageHandler — commands & robustness", () => {
   it("passes categories, cards, payables and recent payments as agent context", async () => {
     const { handler, agent } = makeHandler();
@@ -395,6 +458,7 @@ describe("MessageHandler — commands & robustness", () => {
       agent,
       transactionService,
       makePaymentService(),
+      makeRecurringService(),
       repos.pendingRepo,
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");

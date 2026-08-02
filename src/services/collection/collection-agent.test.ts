@@ -13,6 +13,7 @@ const context: AgentContext = {
   recentPayments: [
     { eventId: 900, description: "conta de luz", amountCents: 18000, paidAt: new Date("2026-07-30") },
   ],
+  recurringBills: [],
 };
 
 function agentReturning(result: ToolCallResult) {

@@ -6,7 +6,9 @@ import { LLMProvider } from "@/services/llm/llm-provider";
 import { CollectionAgent } from "@/services/collection/collection-agent";
 import { TransactionService } from "@/services/transaction/transaction.service";
 import { PaymentService } from "@/services/payment/payment.service";
+import { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import { PaymentEventRepository } from "@/repositories/payment-event.repository";
+import { RecurringBillRepository } from "@/repositories/recurring-bill.repository";
 import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
 import { CategoryRepository } from "@/repositories/category.repository";
@@ -33,14 +35,16 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
 
   const categoryRepo = new CategoryRepository(db);
   const cardRepo = new CardRepository(db);
+  const mantraRepo = new MantraRepository(db);
   const transactionRepo = new TransactionRepository(db);
   const cardInvoiceRepo = new CardInvoiceRepository(db);
+  const recurringBillRepo = new RecurringBillRepository(db);
 
   const agent = new CollectionAgent(llm);
   const transactionService = new TransactionService(
     categoryRepo,
     cardRepo,
-    new MantraRepository(db),
+    mantraRepo,
     transactionRepo,
     cardInvoiceRepo,
   );
@@ -48,6 +52,13 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     transactionRepo,
     cardInvoiceRepo,
     new PaymentEventRepository(db),
+    recurringBillRepo,
+  );
+  const recurringService = new RecurringBillService(
+    categoryRepo,
+    mantraRepo,
+    recurringBillRepo,
+    transactionRepo,
   );
 
   return new MessageHandler(
@@ -57,6 +68,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     agent,
     transactionService,
     paymentService,
+    recurringService,
     new PendingConversationRepository(db),
   );
 }

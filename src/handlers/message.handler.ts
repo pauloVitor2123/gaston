@@ -10,7 +10,9 @@ import type { Direction, TransactionDraft } from "@/services/collection/draft";
 import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
-import type { PendingConversation, User } from "@/db/schema";
+import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
+import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
+import type { PendingConversation, RecurringBill, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
 import { formatReais } from "@/services/money";
@@ -23,7 +25,13 @@ type PaymentConfirmState = {
   description: string;
 };
 type UndoConfirmState = { kind: "undo_confirm"; eventId: number; description: string };
-type PendingState = DraftState | PaymentConfirmState | UndoConfirmState;
+type DeleteRecurringConfirmState = {
+  kind: "delete_recurring_confirm";
+  billId: number;
+  description: string;
+};
+type ConfirmState = PaymentConfirmState | UndoConfirmState | DeleteRecurringConfirmState;
+type PendingState = DraftState | ConfirmState;
 
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -34,6 +42,8 @@ const RECENT_PAYMENTS_LIMIT = 5;
 const EXAMPLES =
   '• "almoço 35 no nubank"\n' +
   '• "recebi 2000 de salário"\n' +
+  '• "pix de 300 pra minha mãe dia 10"\n' +
+  '• "boleto da internet 299 todo dia 15"\n' +
   '• "paguei a conta de luz"';
 
 const ONBOARDING =
@@ -70,6 +80,7 @@ export class MessageHandler {
     private readonly agent: CollectionAgent,
     private readonly transactionService: TransactionService,
     private readonly paymentService: PaymentService,
+    private readonly recurringService: RecurringBillService,
     private readonly pendingRepo: IPendingConversationRepository,
   ) {}
 
@@ -108,7 +119,7 @@ export class MessageHandler {
       activePending = null;
     }
 
-    if (state?.kind === "payment_confirm" || state?.kind === "undo_confirm") {
+    if (state && state.kind !== "draft") {
       const resolved = await this.resolveConfirmation(pending!, state, text, user);
       if (resolved !== null) return resolved;
       activePending = null;
@@ -137,7 +148,7 @@ export class MessageHandler {
 
   private async resolveConfirmation(
     pending: PendingConversation,
-    state: PaymentConfirmState | UndoConfirmState,
+    state: ConfirmState,
     text: string,
     user: User,
   ): Promise<string | null> {
@@ -156,8 +167,12 @@ export class MessageHandler {
         const suffix = result.type === "invoice" && !result.fullyPaid ? " (pagamento parcial)" : "";
         return `✅ Pago: ${result.description} — ${formatReais(result.amountCents)}${suffix}`;
       }
-      const undone = await this.paymentService.undo(user.id, state.eventId);
-      return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
+      if (state.kind === "undo_confirm") {
+        const undone = await this.paymentService.undo(user.id, state.eventId);
+        return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
+      }
+      await this.recurringService.delete(user.id, state.billId);
+      return `🗑️ Cancelei a conta recorrente: ${state.description}`;
     } catch (error) {
       if (error instanceof PaymentError) return error.message;
       throw error;
@@ -172,11 +187,12 @@ export class MessageHandler {
   ): Promise<string> {
     const sanitized = sanitizeUserMessage(text);
     const today = todayInTimeZone(user.timezone);
-    const [categories, cards, payables, recentPayments] = await Promise.all([
+    const [categories, cards, payables, recentPayments, recurringBills] = await Promise.all([
       this.categoryRepo.listByUser(user.id),
       this.cardRepo.listByUser(user.id),
       this.paymentService.listPayables(user.id),
       this.paymentService.listRecentPayments(user.id, RECENT_PAYMENTS_LIMIT),
+      this.recurringService.listActive(user.id),
     ]);
     const cardNames = cards.map((c) => c.name);
 
@@ -191,6 +207,7 @@ export class MessageHandler {
       today,
       payables,
       recentPayments,
+      recurringBills,
     });
 
     if (turn.kind === "draft") {
@@ -202,6 +219,13 @@ export class MessageHandler {
     }
     if (turn.kind === "undo") {
       return this.startUndoConfirm(user, pending, turn.eventId, recentPayments);
+    }
+    if (turn.kind === "recurring") {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return this.recordRecurring(turn.bill, user, today);
+    }
+    if (turn.kind === "delete_recurring") {
+      return this.startDeleteRecurringConfirm(user, pending, turn.billId, recurringBills);
     }
 
     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
@@ -288,6 +312,51 @@ export class MessageHandler {
     };
     await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
     return `Confirma desfazer o pagamento de ${payment.description} — ${formatReais(payment.amountCents)}? (sim/não)`;
+  }
+
+  private async recordRecurring(
+    bill: RecordRecurringBillArgs,
+    user: User,
+    today: string,
+  ): Promise<string> {
+    const { firstDueDate } = await this.recurringService.create(
+      {
+        description: bill.description,
+        amount_cents: bill.amount_cents,
+        due_day: bill.due_day,
+        kind: bill.kind,
+        payment_method: bill.payment_method,
+        category_name: bill.category_name,
+        mantra: applyMantraRules(bill.description),
+      },
+      user.id,
+      new Date(`${today}T00:00:00.000Z`),
+    );
+    return (
+      `🔁 Conta recorrente cadastrada: ${bill.description} — ${formatReais(bill.amount_cents)} ` +
+      `(todo dia ${bill.due_day}). Próximo vencimento ${formatDueDate(firstDueDate)}.`
+    );
+  }
+
+  private async startDeleteRecurringConfirm(
+    user: User,
+    pending: PendingConversation | null,
+    billId: number,
+    recurringBills: RecurringBill[],
+  ): Promise<string> {
+    const bill = recurringBills.find((b) => b.id === billId);
+    if (!bill) {
+      if (pending) await this.pendingRepo.delete(pending.id);
+      return "Não achei essa conta recorrente pra cancelar.";
+    }
+
+    const state: DeleteRecurringConfirmState = {
+      kind: "delete_recurring_confirm",
+      billId,
+      description: bill.description,
+    };
+    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return `Confirma cancelar a conta recorrente ${bill.description} — ${formatReais(bill.expectedAmountCents)}/mês? (sim/não)`;
   }
 
   private async saveQuestion(
@@ -390,6 +459,9 @@ function isPendingState(value: unknown): value is PendingState {
   }
   if (state.kind === "undo_confirm") {
     return typeof state.eventId === "number" && typeof state.description === "string";
+  }
+  if (state.kind === "delete_recurring_confirm") {
+    return typeof state.billId === "number" && typeof state.description === "string";
   }
   return false;
 }

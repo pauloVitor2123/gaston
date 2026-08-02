@@ -8,14 +8,29 @@ import {
   markPaidArgsSchema,
   undoPaymentArgsSchema,
 } from "@/services/payment/tools";
+import {
+  DELETE_RECURRING_BILL_TOOL,
+  RECORD_RECURRING_BILL_TOOL,
+  deleteRecurringBillArgsSchema,
+  recordRecurringBillArgsSchema,
+  type RecordRecurringBillArgs,
+} from "@/services/recurring/tools";
 
 export type AgentTurn =
   | { kind: "draft"; draft: TransactionDraft }
   | { kind: "pay"; target: PaymentTarget; amountCents?: number }
   | { kind: "undo"; eventId: number }
+  | { kind: "recurring"; bill: RecordRecurringBillArgs }
+  | { kind: "delete_recurring"; billId: number }
   | { kind: "question"; text: string };
 
-const TOOLS = [RECORD_TRANSACTION_TOOL, MARK_PAID_TOOL, UNDO_PAYMENT_TOOL];
+const TOOLS = [
+  RECORD_TRANSACTION_TOOL,
+  MARK_PAID_TOOL,
+  UNDO_PAYMENT_TOOL,
+  RECORD_RECURRING_BILL_TOOL,
+  DELETE_RECURRING_BILL_TOOL,
+];
 const FALLBACK_QUESTION = "Me conta o valor e o que foi, por favor.";
 
 export class CollectionAgent {
@@ -44,6 +59,16 @@ export class CollectionAgent {
     if (toolCall?.name === UNDO_PAYMENT_TOOL.name) {
       const parsed = undoPaymentArgsSchema.safeParse(toolCall.arguments);
       if (parsed.success) return { kind: "undo", eventId: parsed.data.event_id };
+    }
+
+    if (toolCall?.name === RECORD_RECURRING_BILL_TOOL.name) {
+      const parsed = recordRecurringBillArgsSchema.safeParse(toolCall.arguments);
+      if (parsed.success) return { kind: "recurring", bill: parsed.data };
+    }
+
+    if (toolCall?.name === DELETE_RECURRING_BILL_TOOL.name) {
+      const parsed = deleteRecurringBillArgsSchema.safeParse(toolCall.arguments);
+      if (parsed.success) return { kind: "delete_recurring", billId: parsed.data.bill_id };
     }
 
     return { kind: "question", text: content?.trim() || FALLBACK_QUESTION };
