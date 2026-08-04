@@ -14,6 +14,7 @@ import type { TransactionService } from "@/services/transaction/transaction.serv
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
 import type { AnalyticsService } from "@/services/analytics/analytics.service";
+import type { BalanceService, BalanceSummary } from "@/services/balance/balance.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
 
@@ -22,6 +23,8 @@ const mockUser: User = {
   telegramChatId: 100,
   name: "Test User",
   timezone: "America/Sao_Paulo",
+  balanceCents: 0,
+  balanceSetAt: new Date("2026-08-01"),
   createdAt: new Date(),
 };
 
@@ -71,6 +74,7 @@ function makeRepos(overrides: {
     userRepo: {
       findByChatId: vi.fn().mockImplementation(overrides.findByChatId ?? (() => Promise.resolve(mockUser))),
       create: vi.fn().mockResolvedValue(mockUser),
+      setBalance: vi.fn().mockResolvedValue(undefined),
     } as unknown as IUserRepository,
     categoryRepo: {
       create: vi.fn(),
@@ -135,6 +139,9 @@ function makeHandler(
   const analytics = {
     aggregate: vi.fn().mockResolvedValue({ rows: [], totalCents: 0 }),
   } as unknown as AnalyticsService;
+  const balance = {
+    summarize: vi.fn().mockResolvedValue(zeroSummary),
+  } as unknown as BalanceService;
 
   const handler = new MessageHandler(
     repos.userRepo,
@@ -147,9 +154,20 @@ function makeHandler(
     installment,
     repos.pendingRepo,
     analytics,
+    balance,
   );
-  return { handler, repos, agent, transactionService, payment, recurring, installment, analytics };
+  return { handler, repos, agent, transactionService, payment, recurring, installment, analytics, balance };
 }
+
+const zeroSummary: BalanceSummary = {
+  base: 0,
+  receivedSince: 0,
+  spentSince: 0,
+  onHand: 0,
+  toReceive: 0,
+  toPay: 0,
+  projected: 0,
+};
 
 function pendingDraft(id: number, cycles: number): PendingConversation {
   return {
@@ -538,6 +556,51 @@ describe("MessageHandler — installment flow", () => {
   });
 });
 
+describe("MessageHandler — saldo flow", () => {
+  const summary: BalanceSummary = {
+    base: 500000,
+    receivedSince: 300000,
+    spentSince: 120000,
+    onHand: 680000,
+    toReceive: 200000,
+    toPay: 312035,
+    projected: 567965,
+  };
+
+  it("shows the balancete on /saldo without an argument, without setting", async () => {
+    const { handler, repos, balance } = makeHandler();
+    (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
+    const reply = await handler.handle(100, "/saldo", "Test User");
+    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(reply).toContain("Na conta hoje: R$ 6800,00");
+    expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
+    expect(reply).toContain("A pagar no mês: R$ 3120,35");
+  });
+
+  it("sets the balance on /saldo <valor> and confirms", async () => {
+    const { handler, repos, balance } = makeHandler();
+    (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
+    const reply = await handler.handle(100, "/saldo 5.000,50", "Test User");
+    expect(repos.userRepo.setBalance).toHaveBeenCalledWith(1, 500050, expect.any(Date));
+    expect(reply).toContain("Saldo definido: R$ 5000,50");
+  });
+
+  it("rejects an unparseable amount without setting", async () => {
+    const { handler, repos } = makeHandler();
+    const reply = await handler.handle(100, "/saldo abc", "Test User");
+    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("não entendi");
+  });
+
+  it("adds the balance footer to /status", async () => {
+    const { handler, balance } = makeHandler();
+    (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
+    const reply = await handler.handle(100, "/status", "Test User");
+    expect(reply).toContain("Na conta hoje: R$ 6800,00");
+    expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
+  });
+});
+
 describe("MessageHandler — commands & robustness", () => {
   it("passes categories, cards, payables and recent payments as agent context", async () => {
     const { handler, agent } = makeHandler();
@@ -637,6 +700,7 @@ describe("MessageHandler — commands & robustness", () => {
     const agent = { run: vi.fn().mockRejectedValue(new Error("LLM down")) } as unknown as CollectionAgent;
     const transactionService = { persist: vi.fn() } as unknown as TransactionService;
     const analytics = { aggregate: vi.fn() } as unknown as AnalyticsService;
+    const balance = { summarize: vi.fn().mockResolvedValue(zeroSummary) } as unknown as BalanceService;
     const handler = new MessageHandler(
       repos.userRepo,
       repos.categoryRepo,
@@ -648,6 +712,7 @@ describe("MessageHandler — commands & robustness", () => {
       makeInstallmentService(),
       repos.pendingRepo,
       analytics,
+      balance,
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");
     expect(reply).toContain("problema");

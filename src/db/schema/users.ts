@@ -6,6 +6,10 @@ export const users = sqliteTable("users", {
   telegramChatId: integer("telegram_chat_id").notNull().unique(),
   name: text("name"),
   timezone: text("timezone").notNull().default("America/Sao_Paulo"),
+  balanceCents: integer("balance_cents").notNull().default(0),
+  balanceSetAt: integer("balance_set_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),

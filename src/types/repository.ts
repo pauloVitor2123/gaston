@@ -24,6 +24,7 @@ import type {
 export interface IUserRepository {
   findByChatId(telegramChatId: number): Promise<User | null>;
   create(data: NewUser): Promise<User>;
+  setBalance(userId: number, balanceCents: number, at: Date): Promise<void>;
 }
 
 export interface ICardRepository {
@@ -80,6 +81,11 @@ export interface ISpendingRepository {
   sumByMantra(filter: SpendingFilter): Promise<SpendingRow[]>;
   sumByCard(filter: SpendingFilter): Promise<SpendingRow[]>;
   sumByPaymentMethod(filter: SpendingFilter): Promise<SpendingRow[]>;
+}
+
+export interface IBalanceRepository {
+  sumSettledSince(userId: number, direction: "in" | "out", since: Date): Promise<number>;
+  sumPendingUntil(userId: number, direction: "in" | "out", until: Date): Promise<number>;
 }
 
 export interface ICardInvoiceRepository {
