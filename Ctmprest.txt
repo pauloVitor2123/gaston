@@ -1,0 +1,797 @@
+diff --git a/src/composition-root.ts b/src/composition-root.ts
+index afdadb4..ce74590 100644
+--- a/src/composition-root.ts
++++ b/src/composition-root.ts
+@@ -6,7 +6,11 @@ import { LLMProvider } from "@/services/llm/llm-provider";
+ import { CollectionAgent } from "@/services/collection/collection-agent";
+ import { TransactionService } from "@/services/transaction/transaction.service";
+ import { PaymentService } from "@/services/payment/payment.service";
++import { RecurringBillService } from "@/services/recurring/recurring-bill.service";
++import { InstallmentService } from "@/services/installment/installment.service";
+ import { PaymentEventRepository } from "@/repositories/payment-event.repository";
++import { RecurringBillRepository } from "@/repositories/recurring-bill.repository";
++import { InstallmentPurchaseRepository } from "@/repositories/installment-purchase.repository";
+ import { MessageHandler } from "@/handlers/message.handler";
+ import { UserRepository } from "@/repositories/user.repository";
+ import { CategoryRepository } from "@/repositories/category.repository";
+@@ -33,14 +37,16 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
+ 
+   const categoryRepo = new CategoryRepository(db);
+   const cardRepo = new CardRepository(db);
++  const mantraRepo = new MantraRepository(db);
+   const transactionRepo = new TransactionRepository(db);
+   const cardInvoiceRepo = new CardInvoiceRepository(db);
++  const recurringBillRepo = new RecurringBillRepository(db);
+ 
+   const agent = new CollectionAgent(llm);
+   const transactionService = new TransactionService(
+     categoryRepo,
+     cardRepo,
+-    new MantraRepository(db),
++    mantraRepo,
+     transactionRepo,
+     cardInvoiceRepo,
+   );
+@@ -48,6 +54,21 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
+     transactionRepo,
+     cardInvoiceRepo,
+     new PaymentEventRepository(db),
++    recurringBillRepo,
++  );
++  const recurringService = new RecurringBillService(
++    categoryRepo,
++    mantraRepo,
++    recurringBillRepo,
++    transactionRepo,
++  );
++  const installmentService = new InstallmentService(
++    categoryRepo,
++    cardRepo,
++    mantraRepo,
++    new InstallmentPurchaseRepository(db),
++    transactionRepo,
++    cardInvoiceRepo,
+   );
+ 
+   return new MessageHandler(
+@@ -57,6 +78,8 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
+     agent,
+     transactionService,
+     paymentService,
++    recurringService,
++    installmentService,
+     new PendingConversationRepository(db),
+   );
+ }
+diff --git a/src/handlers/message.handler.ts b/src/handlers/message.handler.ts
+index 5fd30e1..ac9a5e2 100644
+--- a/src/handlers/message.handler.ts
++++ b/src/handlers/message.handler.ts
+@@ -10,7 +10,11 @@ import type { Direction, TransactionDraft } from "@/services/collection/draft";
+ import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
+ import { PaymentError } from "@/services/payment/errors";
+ import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
+-import type { PendingConversation, User } from "@/db/schema";
++import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
++import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
++import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
++import type { RecordInstallmentArgs } from "@/services/installment/tools";
++import type { PendingConversation, RecurringBill, User } from "@/db/schema";
+ import { sanitizeUserMessage } from "@/services/collection/sanitize";
+ import { applyMantraRules } from "@/services/collection/mantra-rules";
+ import { formatReais } from "@/services/money";
+@@ -23,7 +27,13 @@ type PaymentConfirmState = {
+   description: string;
+ };
+ type UndoConfirmState = { kind: "undo_confirm"; eventId: number; description: string };
+-type PendingState = DraftState | PaymentConfirmState | UndoConfirmState;
++type DeleteRecurringConfirmState = {
++  kind: "delete_recurring_confirm";
++  billId: number;
++  description: string;
++};
++type ConfirmState = PaymentConfirmState | UndoConfirmState | DeleteRecurringConfirmState;
++type PendingState = DraftState | ConfirmState;
+ 
+ const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+ const CONFIRM_TTL_MS = 10 * 60 * 1000;
+@@ -31,12 +41,34 @@ const MAX_CYCLES = 3;
+ const MAX_THREAD_MESSAGES = 12;
+ const RECENT_PAYMENTS_LIMIT = 5;
+ 
++const EXAMPLES =
++  '• "almoço 35 no nubank"\n' +
++  '• "recebi 2000 de salário"\n' +
++  '• "pix de 300 pra minha mãe dia 10"\n' +
++  '• "boleto da internet 299 todo dia 15"\n' +
++  '• "máquina de lavar 3668 em 5x no nubank"\n' +
++  '• "paguei a conta de luz"';
++
+ const ONBOARDING =
+   "Oi! Sou o Gaston, seu assistente financeiro 💸\n\n" +
+   "Me conte seus gastos e recebimentos em linguagem natural, por exemplo:\n" +
+-  '• "almoço 35 no nubank"\n' +
+-  '• "recebi 2000 de salário"\n\n' +
+-  "Para abandonar um registro em andamento, mande /cancelar.";
++  EXAMPLES +
++  "\n\nMande /help pra ver tudo que eu faço.";
++
++const HELP =
++  "🤖 Gaston — o que eu faço\n\n" +
++  "Comandos:\n" +
++  "/status — situação do mês (atrasados e a vencer)\n" +
++  "/pendentes — o que você ainda tem a pagar\n" +
++  "/cancelar — abandona um registro em andamento\n" +
++  "/help — mostra esta ajuda\n\n" +
++  "Ou é só me escrever naturalmente:\n" +
++  EXAMPLES;
++
++const NO_PENDING = "Você não tem nada em aberto. 🎉";
++
++const INSTALLMENT_NO_CARD =
++  "Pra registrar uma compra parcelada preciso saber o cartão. Cadastre-o com /cartao e tente de novo.";
+ 
+ const GENERIC_ERROR =
+   "Tive um problema para processar isso agora 😕. Pode tentar de novo em instantes?";
+@@ -55,6 +87,8 @@ export class MessageHandler {
+     private readonly agent: CollectionAgent,
+     private readonly transactionService: TransactionService,
+     private readonly paymentService: PaymentService,
++    private readonly recurringService: RecurringBillService,
++    private readonly installmentService: InstallmentService,
+     private readonly pendingRepo: IPendingConversationRepository,
+   ) {}
+ 
+@@ -62,7 +96,8 @@ export class MessageHandler {
+     try {
+       return await this.route(chatId, text, senderName);
+     } catch (error) {
+-      console.error("MessageHandler.handle failed", error);
++      const detail = error instanceof Error ? error.message : String(error);
++      console.error(`MessageHandler.handle failed: ${detail}`, error);
+       return GENERIC_ERROR;
+     }
+   }
+@@ -82,6 +117,9 @@ export class MessageHandler {
+         ? "Ok, cancelei o que estava em andamento. 👍"
+         : "Não há nada em andamento para cancelar.";
+     }
++    if (command === "/help") return HELP;
++    if (command === "/pendentes") return this.listPending(user);
++    if (command === "/status") return this.showStatus(user);
+ 
+     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
+     let activePending = pending;
+@@ -90,7 +128,7 @@ export class MessageHandler {
+       activePending = null;
+     }
+ 
+-    if (state?.kind === "payment_confirm" || state?.kind === "undo_confirm") {
++    if (state && state.kind !== "draft") {
+       const resolved = await this.resolveConfirmation(pending!, state, text, user);
+       if (resolved !== null) return resolved;
+       activePending = null;
+@@ -99,6 +137,33 @@ export class MessageHandler {
+     return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending);
+   }
+ 
++  private async listPending(user: User): Promise<string> {
++    const payables = await this.paymentService.listPayables(user.id);
++    if (payables.length === 0) return NO_PENDING;
++
++    const lines = sortByDue(payables).map(payableLine);
++    return `📋 Pendentes:\n${lines.join("\n")}`;
++  }
++
++  private async showStatus(user: User): Promise<string> {
++    const payables = await this.paymentService.listPayables(user.id);
++    if (payables.length === 0) return "📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉";
++
++    const todayMs = new Date(`${todayInTimeZone(user.timezone)}T00:00:00.000Z`).getTime();
++    const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
++    const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
++
++    const sections: string[] = [];
++    if (overdue.length) {
++      sections.push(`🔴 Atrasados (${formatReais(sumPayables(overdue))}):\n${overdue.map(payableLine).join("\n")}`);
++    }
++    if (upcoming.length) {
++      sections.push(`🟡 A vencer (${formatReais(sumPayables(upcoming))}):\n${upcoming.map(payableLine).join("\n")}`);
++    }
++
++    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}`;
++  }
++
+   private async resolveUser(chatId: number, name: string): Promise<User> {
+     const existing = await this.userRepo.findByChatId(chatId);
+     if (existing) return existing;
+@@ -107,7 +172,7 @@ export class MessageHandler {
+ 
+   private async resolveConfirmation(
+     pending: PendingConversation,
+-    state: PaymentConfirmState | UndoConfirmState,
++    state: ConfirmState,
+     text: string,
+     user: User,
+   ): Promise<string | null> {
+@@ -126,8 +191,12 @@ export class MessageHandler {
+         const suffix = result.type === "invoice" && !result.fullyPaid ? " (pagamento parcial)" : "";
+         return `✅ Pago: ${result.description} — ${formatReais(result.amountCents)}${suffix}`;
+       }
+-      const undone = await this.paymentService.undo(user.id, state.eventId);
+-      return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
++      if (state.kind === "undo_confirm") {
++        const undone = await this.paymentService.undo(user.id, state.eventId);
++        return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
++      }
++      await this.recurringService.delete(user.id, state.billId);
++      return `🗑️ Cancelei a conta recorrente: ${state.description}`;
+     } catch (error) {
+       if (error instanceof PaymentError) return error.message;
+       throw error;
+@@ -142,11 +211,12 @@ export class MessageHandler {
+   ): Promise<string> {
+     const sanitized = sanitizeUserMessage(text);
+     const today = todayInTimeZone(user.timezone);
+-    const [categories, cards, payables, recentPayments] = await Promise.all([
++    const [categories, cards, payables, recentPayments, recurringBills] = await Promise.all([
+       this.categoryRepo.listByUser(user.id),
+       this.cardRepo.listByUser(user.id),
+       this.paymentService.listPayables(user.id),
+       this.paymentService.listRecentPayments(user.id, RECENT_PAYMENTS_LIMIT),
++      this.recurringService.listActive(user.id),
+     ]);
+     const cardNames = cards.map((c) => c.name);
+ 
+@@ -161,6 +231,7 @@ export class MessageHandler {
+       today,
+       payables,
+       recentPayments,
++      recurringBills,
+     });
+ 
+     if (turn.kind === "draft") {
+@@ -173,6 +244,17 @@ export class MessageHandler {
+     if (turn.kind === "undo") {
+       return this.startUndoConfirm(user, pending, turn.eventId, recentPayments);
+     }
++    if (turn.kind === "recurring") {
++      if (pending) await this.pendingRepo.delete(pending.id);
++      return this.recordRecurring(turn.bill, user, today);
++    }
++    if (turn.kind === "delete_recurring") {
++      return this.startDeleteRecurringConfirm(user, pending, turn.billId, recurringBills);
++    }
++    if (turn.kind === "installment") {
++      if (pending) await this.pendingRepo.delete(pending.id);
++      return this.recordInstallment(turn.purchase, user);
++    }
+ 
+     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
+     const cycles = (draft?.cycles ?? 0) + 1;
+@@ -203,6 +285,8 @@ export class MessageHandler {
+       description: draft.description,
+       amount_cents: draft.amount_cents,
+       date: draft.date ?? today,
++      due_date: draft.due_date,
++      already_paid: draft.already_paid,
+       payment_method: paymentMethod,
+       card_name: matchedCard,
+       category_name: draft.category_name,
+@@ -258,6 +342,77 @@ export class MessageHandler {
+     return `Confirma desfazer o pagamento de ${payment.description} — ${formatReais(payment.amountCents)}? (sim/não)`;
+   }
+ 
++  private async recordRecurring(
++    bill: RecordRecurringBillArgs,
++    user: User,
++    today: string,
++  ): Promise<string> {
++    const { firstDueDate } = await this.recurringService.create(
++      {
++        description: bill.description,
++        amount_cents: bill.amount_cents,
++        due_day: bill.due_day,
++        kind: bill.kind,
++        payment_method: bill.payment_method,
++        category_name: bill.category_name,
++        mantra: applyMantraRules(bill.description),
++      },
++      user.id,
++      new Date(`${today}T00:00:00.000Z`),
++    );
++    return (
++      `🔁 Conta recorrente cadastrada: ${bill.description} — ${formatReais(bill.amount_cents)} ` +
++      `(todo dia ${bill.due_day}). Próximo vencimento ${formatDueDate(firstDueDate)}.`
++    );
++  }
++
++  private async recordInstallment(purchase: RecordInstallmentArgs, user: User): Promise<string> {
++    try {
++      const result = await this.installmentService.create(
++        {
++          description: purchase.description,
++          total_amount_cents: purchase.total_amount_cents,
++          installments_count: purchase.installments_count,
++          card_name: purchase.card_name,
++          category_name: purchase.category_name,
++          mantra: applyMantraRules(purchase.description),
++          date: purchase.date,
++        },
++        user.id,
++      );
++      const total = formatReais(purchase.total_amount_cents);
++      const each = formatReais(result.installmentCents);
++      return (
++        `💳 Parcelado: ${purchase.description} — ${total} em ${purchase.installments_count}x de ${each}\n` +
++        `🗓️ 1ª parcela vence ${formatDueDate(result.firstDueDate)}`
++      );
++    } catch (error) {
++      if (error instanceof InstallmentPurchaseNotAllowedError) return INSTALLMENT_NO_CARD;
++      throw error;
++    }
++  }
++
++  private async startDeleteRecurringConfirm(
++    user: User,
++    pending: PendingConversation | null,
++    billId: number,
++    recurringBills: RecurringBill[],
++  ): Promise<string> {
++    const bill = recurringBills.find((b) => b.id === billId);
++    if (!bill) {
++      if (pending) await this.pendingRepo.delete(pending.id);
++      return "Não achei essa conta recorrente pra cancelar.";
++    }
++
++    const state: DeleteRecurringConfirmState = {
++      kind: "delete_recurring_confirm",
++      billId,
++      description: bill.description,
++    };
++    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
++    return `Confirma cancelar a conta recorrente ${bill.description} — ${formatReais(bill.expectedAmountCents)}/mês? (sim/não)`;
++  }
++
+   private async saveQuestion(
+     user: User,
+     pending: PendingConversation | null,
+@@ -302,6 +457,7 @@ export class MessageHandler {
+     if (input.category_name) meta.push(`📁 ${input.category_name}`);
+     if (input.card_name) meta.push(`💳 ${input.card_name}`);
+     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
++    if (isFutureObligation(input)) meta.push(`🗓️ vence ${dayMonthOf(input.due_date!)} (pendente)`);
+     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
+   }
+ }
+@@ -318,6 +474,37 @@ function affirmationOf(text: string): "yes" | "no" | null {
+   return null;
+ }
+ 
++function isFutureObligation(input: TransactionInput): boolean {
++  return (
++    input.already_paid !== true &&
++    input.due_date !== undefined &&
++    input.payment_method !== "card"
++  );
++}
++
++function dayMonthOf(isoDate: string): string {
++  const [, month, day] = isoDate.split("-");
++  return `${day}/${month}`;
++}
++
++function sortByDue(payables: Payable[]): Payable[] {
++  return [...payables].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
++}
++
++function sumPayables(payables: Payable[]): number {
++  return payables.reduce((total, p) => total + p.amountCents, 0);
++}
++
++function payableLine(p: Payable): string {
++  return `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDueDate(p.dueDate)})`;
++}
++
++function formatDueDate(date: Date): string {
++  const day = String(date.getUTCDate()).padStart(2, "0");
++  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
++  return `${day}/${month}`;
++}
++
+ function todayInTimeZone(timeZone: string): string {
+   return new Intl.DateTimeFormat("en-CA", {
+     timeZone,
+@@ -339,6 +526,9 @@ function isPendingState(value: unknown): value is PendingState {
+   if (state.kind === "undo_confirm") {
+     return typeof state.eventId === "number" && typeof state.description === "string";
+   }
++  if (state.kind === "delete_recurring_confirm") {
++    return typeof state.billId === "number" && typeof state.description === "string";
++  }
+   return false;
+ }
+ 
+diff --git a/src/repositories/recurring-bill.repository.ts b/src/repositories/recurring-bill.repository.ts
+index 217b2de..6fda573 100644
+--- a/src/repositories/recurring-bill.repository.ts
++++ b/src/repositories/recurring-bill.repository.ts
+@@ -18,4 +18,19 @@ export class RecurringBillRepository implements IRecurringBillRepository {
+       .from(recurringBills)
+       .where(and(eq(recurringBills.userId, userId), eq(recurringBills.isActive, true)));
+   }
++
++  async findById(userId: number, id: number): Promise<RecurringBill | null> {
++    const [row] = await this.db
++      .select()
++      .from(recurringBills)
++      .where(and(eq(recurringBills.userId, userId), eq(recurringBills.id, id)));
++    return row ?? null;
++  }
++
++  async deactivate(userId: number, id: number): Promise<void> {
++    await this.db
++      .update(recurringBills)
++      .set({ isActive: false })
++      .where(and(eq(recurringBills.userId, userId), eq(recurringBills.id, id)));
++  }
+ }
+diff --git a/src/repositories/transaction.repository.ts b/src/repositories/transaction.repository.ts
+index c93aee0..1493ca4 100644
+--- a/src/repositories/transaction.repository.ts
++++ b/src/repositories/transaction.repository.ts
+@@ -51,6 +51,14 @@ export class TransactionRepository implements ITransactionRepository {
+       .where(and(eq(transactions.userId, userId), eq(transactions.cardInvoiceId, cardInvoiceId)));
+   }
+ 
++  async listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]> {
++    return this.db
++      .select()
++      .from(transactions)
++      .where(and(eq(transactions.userId, userId), eq(transactions.recurringBillId, recurringBillId)))
++      .orderBy(transactions.dueDate);
++  }
++
+   async update(
+     userId: number,
+     id: number,
+diff --git a/src/services/collection/collection-agent.ts b/src/services/collection/collection-agent.ts
+index a34ce1f..32635aa 100644
+--- a/src/services/collection/collection-agent.ts
++++ b/src/services/collection/collection-agent.ts
+@@ -8,14 +8,36 @@ import {
+   markPaidArgsSchema,
+   undoPaymentArgsSchema,
+ } from "@/services/payment/tools";
++import {
++  DELETE_RECURRING_BILL_TOOL,
++  RECORD_RECURRING_BILL_TOOL,
++  deleteRecurringBillArgsSchema,
++  recordRecurringBillArgsSchema,
++  type RecordRecurringBillArgs,
++} from "@/services/recurring/tools";
++import {
++  RECORD_INSTALLMENT_TOOL,
++  recordInstallmentArgsSchema,
++  type RecordInstallmentArgs,
++} from "@/services/installment/tools";
+ 
+ export type AgentTurn =
+   | { kind: "draft"; draft: TransactionDraft }
+   | { kind: "pay"; target: PaymentTarget; amountCents?: number }
+   | { kind: "undo"; eventId: number }
++  | { kind: "recurring"; bill: RecordRecurringBillArgs }
++  | { kind: "delete_recurring"; billId: number }
++  | { kind: "installment"; purchase: RecordInstallmentArgs }
+   | { kind: "question"; text: string };
+ 
+-const TOOLS = [RECORD_TRANSACTION_TOOL, MARK_PAID_TOOL, UNDO_PAYMENT_TOOL];
++const TOOLS = [
++  RECORD_TRANSACTION_TOOL,
++  MARK_PAID_TOOL,
++  UNDO_PAYMENT_TOOL,
++  RECORD_RECURRING_BILL_TOOL,
++  DELETE_RECURRING_BILL_TOOL,
++  RECORD_INSTALLMENT_TOOL,
++];
+ const FALLBACK_QUESTION = "Me conta o valor e o que foi, por favor.";
+ 
+ export class CollectionAgent {
+@@ -46,6 +68,21 @@ export class CollectionAgent {
+       if (parsed.success) return { kind: "undo", eventId: parsed.data.event_id };
+     }
+ 
++    if (toolCall?.name === RECORD_RECURRING_BILL_TOOL.name) {
++      const parsed = recordRecurringBillArgsSchema.safeParse(toolCall.arguments);
++      if (parsed.success) return { kind: "recurring", bill: parsed.data };
++    }
++
++    if (toolCall?.name === DELETE_RECURRING_BILL_TOOL.name) {
++      const parsed = deleteRecurringBillArgsSchema.safeParse(toolCall.arguments);
++      if (parsed.success) return { kind: "delete_recurring", billId: parsed.data.bill_id };
++    }
++
++    if (toolCall?.name === RECORD_INSTALLMENT_TOOL.name) {
++      const parsed = recordInstallmentArgsSchema.safeParse(toolCall.arguments);
++      if (parsed.success) return { kind: "installment", purchase: parsed.data };
++    }
++
+     return { kind: "question", text: content?.trim() || FALLBACK_QUESTION };
+   }
+ }
+diff --git a/src/services/collection/draft.ts b/src/services/collection/draft.ts
+index 7bc27a4..1bb4d39 100644
+--- a/src/services/collection/draft.ts
++++ b/src/services/collection/draft.ts
+@@ -13,6 +13,11 @@ export const transactionDraftSchema = z.object({
+     .string()
+     .regex(/^\d{4}-\d{2}-\d{2}$/)
+     .optional(),
++  due_date: z
++    .string()
++    .regex(/^\d{4}-\d{2}-\d{2}$/)
++    .optional(),
++  already_paid: z.boolean().optional(),
+ });
+ 
+ export type TransactionDraft = z.infer<typeof transactionDraftSchema>;
+@@ -28,6 +33,9 @@ export const RECORD_TRANSACTION_TOOL: ToolDefinition = {
+   description:
+     "Registra um lançamento financeiro (gasto ou recebimento) do usuário. " +
+     "Chame apenas quando tiver ao menos o valor (amount_cents) e a descrição (description). " +
+-    "Deixe de fora os campos opcionais que o usuário não informou.",
++    "Deixe de fora os campos opcionais que o usuário não informou. " +
++    "Use due_date (YYYY-MM-DD) quando for uma obrigação futura a pagar (ex.: 'pix pra mãe dia 10'). " +
++    "already_paid=false quando o usuário ainda não pagou (ex.: 'boleto venceu ontem, não paguei'); " +
++    "already_paid=true ou omitido quando já aconteceu/já pagou.",
+   parameters: toToolParameters(transactionDraftSchema),
+ };
+diff --git a/src/services/collection/prompts.ts b/src/services/collection/prompts.ts
+index 4c9e216..b09f384 100644
+--- a/src/services/collection/prompts.ts
++++ b/src/services/collection/prompts.ts
+@@ -1,4 +1,5 @@
+ import type { Payable, RecentPayment } from "@/services/payment/payment.service";
++import type { RecurringBill } from "@/db/schema";
+ import { formatReais } from "@/services/money";
+ 
+ export interface AgentContext {
+@@ -7,6 +8,7 @@ export interface AgentContext {
+   today: string;
+   payables: Payable[];
+   recentPayments: RecentPayment[];
++  recurringBills: RecurringBill[];
+ }
+ 
+ function formatDay(date: Date): string {
+@@ -29,6 +31,14 @@ function recentPaymentsBlock(payments: RecentPayment[]): string {
+   return `Pagamentos recentes (use o event_id em undo_payment):\n${lines.join("\n")}`;
+ }
+ 
++function recurringBillsBlock(bills: RecurringBill[]): string {
++  if (bills.length === 0) return "Contas recorrentes: (nenhuma)";
++  const lines = bills.map(
++    (b) => `- [#${b.id}] ${b.description} — ${formatReais(b.expectedAmountCents)} (todo dia ${b.dueDay})`,
++  );
++  return `Contas recorrentes (use o bill_id em delete_recurring_bill):\n${lines.join("\n")}`;
++}
++
+ export function buildCollectionSystemPrompt(context: AgentContext): string {
+   return `Você é o Gaston, assistente financeiro pessoal, falando em português. Você pode: registrar lançamentos, marcar pendentes como pagos e desfazer pagamentos.
+ 
+@@ -38,6 +48,9 @@ Escolha a ação a cada turno:
+ - Registrar gasto/recebimento → ferramenta record_transaction (só quando tiver valor e descrição).
+ - Pagar um pendente → ferramenta mark_paid com um target_id da lista "Pendentes".
+ - Desfazer/estornar um pagamento → ferramenta undo_payment com um event_id da lista "Pagamentos recentes".
++- Cadastrar conta mensal recorrente (boleto fixo, assinatura) → ferramenta record_recurring_bill.
++- Cancelar uma conta recorrente → ferramenta delete_recurring_bill com um bill_id da lista "Contas recorrentes".
++- Compra parcelada no cartão ('em 5x', 'parcelado') → ferramenta record_installment_purchase (total_amount_cents é o valor total).
+ - Se faltar informação ou nada casar com a lista, responda em texto com UMA pergunta curta. Não chame ferramenta.
+ 
+ Nunca invente ids. Use apenas os ids das listas abaixo. Trate um pedido por vez.
+@@ -48,6 +61,8 @@ Opcionais — só preencha se o usuário informar; só pergunte em ambiguidade r
+ - card_name: use apenas um cartão da lista; cartão fora da lista → deixe em branco.
+ - category_name: use apenas uma categoria da lista.
+ - date: YYYY-MM-DD (padrão: ${context.today}).
++- due_date: YYYY-MM-DD — só para obrigação futura a pagar (ex.: "pix pra mãe dia 10", "boleto vence dia 15").
++- already_paid: false se o usuário ainda não pagou (ex.: "venceu e não paguei"); true ou omitido se já aconteceu/já pagou.
+ 
+ Categorias disponíveis: ${context.categories.join(", ") || "(nenhuma)"}
+ Cartões disponíveis: ${context.cards.join(", ") || "(nenhum)"}
+@@ -55,5 +70,7 @@ Data de hoje: ${context.today}.
+ 
+ ${payablesBlock(context.payables)}
+ 
+-${recentPaymentsBlock(context.recentPayments)}`;
++${recentPaymentsBlock(context.recentPayments)}
++
++${recurringBillsBlock(context.recurringBills)}`;
+ }
+diff --git a/src/services/payment/payment.service.ts b/src/services/payment/payment.service.ts
+index 0b462ce..3c79273 100644
+--- a/src/services/payment/payment.service.ts
++++ b/src/services/payment/payment.service.ts
+@@ -1,10 +1,12 @@
+ import type {
+   ICardInvoiceRepository,
+   IPaymentEventRepository,
++  IRecurringBillRepository,
+   ITransactionRepository,
+ } from "@/types/repository";
+-import type { PaymentEvent } from "@/db/schema";
++import type { PaymentEvent, Transaction } from "@/db/schema";
+ import { PaymentError } from "@/services/payment/errors";
++import { materializedBill, nextOccurrence } from "@/services/recurring/recurring";
+ 
+ export type PayableType = PaymentEvent["targetType"];
+ 
+@@ -53,6 +55,7 @@ export class PaymentService {
+     private readonly transactionRepo: ITransactionRepository,
+     private readonly cardInvoiceRepo: ICardInvoiceRepository,
+     private readonly paymentEventRepo: IPaymentEventRepository,
++    private readonly recurringBillRepo: IRecurringBillRepository,
+   ) {}
+ 
+   async listPayables(userId: number): Promise<Payable[]> {
+@@ -108,6 +111,11 @@ export class PaymentService {
+       throw new PaymentError("Pagamento não encontrado ou já desfeito.");
+     }
+ 
++    if (event.targetType === "transaction") {
++      const transaction = await this.transactionRepo.findById(userId, event.targetId);
++      if (transaction) await this.rollBackRecurringChain(userId, transaction);
++    }
++
+     await this.paymentEventRepo.void(event.id);
+ 
+     if (event.targetType === "transaction") {
+@@ -123,6 +131,21 @@ export class PaymentService {
+     return { type: event.targetType, description: event.description, amountCents: event.amountCents };
+   }
+ 
++  private async rollBackRecurringChain(userId: number, transaction: Transaction): Promise<void> {
++    if (transaction.source !== "recurring" || !transaction.recurringBillId) return;
++
++    const occurrences = await this.transactionRepo.listByRecurringBill(userId, transaction.recurringBillId);
++    const later = occurrences.filter(
++      (o) => o.dueDate.getTime() > transaction.dueDate.getTime() && o.status !== "cancelled",
++    );
++    if (later.some((o) => o.status === "settled")) {
++      throw new PaymentError("Desfaça primeiro o pagamento do mês mais recente.");
++    }
++    for (const occurrence of later) {
++      await this.transactionRepo.update(userId, occurrence.id, { status: "cancelled" });
++    }
++  }
++
+   private async payTransaction(
+     userId: number,
+     id: number,
+@@ -151,6 +174,8 @@ export class PaymentService {
+       settledAt: now,
+     });
+ 
++    await this.advanceRecurring(userId, transaction);
++
+     return {
+       eventId: event.id,
+       type: "transaction",
+@@ -160,6 +185,20 @@ export class PaymentService {
+     };
+   }
+ 
++  private async advanceRecurring(userId: number, transaction: Transaction): Promise<void> {
++    if (transaction.source !== "recurring" || !transaction.recurringBillId) return;
++
++    const bill = await this.recurringBillRepo.findById(userId, transaction.recurringBillId);
++    if (!bill?.isActive) return;
++
++    const nextDue = nextOccurrence(transaction.dueDate, bill.dueDay);
++    const occurrences = await this.transactionRepo.listByRecurringBill(userId, bill.id);
++    const alreadyRolled = occurrences.some(
++      (o) => o.status !== "cancelled" && o.dueDate.getTime() >= nextDue.getTime(),
++    );
++    if (!alreadyRolled) await this.transactionRepo.create(materializedBill(bill, nextDue));
++  }
++
+   private async payInvoice(
+     userId: number,
+     id: number,
+diff --git a/src/services/transaction/transaction.service.ts b/src/services/transaction/transaction.service.ts
+index e17f0aa..c128be2 100644
+--- a/src/services/transaction/transaction.service.ts
++++ b/src/services/transaction/transaction.service.ts
+@@ -14,21 +14,33 @@ export interface TransactionInput {
+   description: string;
+   amount_cents: number;
+   date?: string;
++  due_date?: string;
++  already_paid?: boolean;
+   payment_method?: PaymentMethod;
+   card_name?: string;
+   category_name?: string;
+   mantra?: Mantra;
+ }
+ 
+-function toAccrualDate(date?: string): Date {
+-  if (date) {
+-    const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+-    return new Date(Date.UTC(year, month - 1, day));
+-  }
++function parseUtcDate(date: string): Date {
++  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
++  return new Date(Date.UTC(year, month - 1, day));
++}
++
++function todayUtcMidnight(): Date {
+   const now = new Date();
+   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+ }
+ 
++function toAccrualDate(date?: string): Date {
++  return date ? parseUtcDate(date) : todayUtcMidnight();
++}
++
++function settlesOnRecord(alreadyPaid: boolean | undefined, dueDate: Date): boolean {
++  if (alreadyPaid !== undefined) return alreadyPaid;
++  return dueDate.getTime() <= todayUtcMidnight().getTime();
++}
++
+ export class TransactionService {
+   constructor(
+     private readonly categoryRepo: ICategoryRepository,
+@@ -54,7 +66,10 @@ export class TransactionService {
+     ]);
+ 
+     let cardInvoiceId: number | undefined;
+-    let dueDate = accrualDate;
++    let dueDate = input.due_date ? parseUtcDate(input.due_date) : accrualDate;
++    let status: Transaction["status"] = "pending";
++    let settledAt: Date | undefined;
++    let actualAmountCents: number | undefined;
+ 
+     if (input.payment_method === "card" && card) {
+       const period = invoiceFor(accrualDate, card);
+@@ -67,6 +82,10 @@ export class TransactionService {
+       );
+       cardInvoiceId = invoice.id;
+       dueDate = period.due_date;
++    } else if (settlesOnRecord(input.already_paid, dueDate)) {
++      status = "settled";
++      settledAt = new Date();
++      actualAmountCents = input.amount_cents;
+     }
+ 
+     return this.transactionRepo.create({
+@@ -83,7 +102,9 @@ export class TransactionService {
+       mantraId: mantra?.id,
+       source: "user",
+       rawMessage,
+-      status: "pending",
++      status,
++      settledAt,
++      actualAmountCents,
+     });
+   }
+ }
+diff --git a/src/types/repository.ts b/src/types/repository.ts
+index fc04046..81a2cb2 100644
+--- a/src/types/repository.ts
++++ b/src/types/repository.ts
+@@ -58,6 +58,7 @@ export interface ITransactionRepository {
+   findById(userId: number, id: number): Promise<Transaction | null>;
+   listPayable(userId: number): Promise<Transaction[]>;
+   listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]>;
++  listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]>;
+   update(userId: number, id: number, patch: TransactionSettlementPatch): Promise<void>;
+ }
+ 
+@@ -81,6 +82,8 @@ export interface IInstallmentPurchaseRepository {
+ export interface IRecurringBillRepository {
+   create(data: NewRecurringBill): Promise<RecurringBill>;
+   listActive(userId: number): Promise<RecurringBill[]>;
++  findById(userId: number, id: number): Promise<RecurringBill | null>;
++  deactivate(userId: number, id: number): Promise<void>;
+ }
+ 
+ export interface IPendingConversationRepository {

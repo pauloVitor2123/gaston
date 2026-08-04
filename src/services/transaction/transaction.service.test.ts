@@ -174,3 +174,50 @@ describe("TransactionService.persist", () => {
     expect(created.status).toBe("pending");
   });
 });
+
+describe("TransactionService.persist — settled vs pending", () => {
+  const cashPast: TransactionInput = {
+    ...baseResult,
+    payment_method: "pix",
+    card_name: undefined,
+    date: "2025-01-15",
+  };
+
+  it("settles a cash/pix expense that already happened", async () => {
+    const { service, repos } = makeService();
+    await service.persist(cashPast, userId, "raw");
+
+    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.status).toBe("settled");
+    expect(created.settledAt).toBeInstanceOf(Date);
+    expect(created.actualAmountCents).toBe(3500);
+  });
+
+  it("keeps a future obligation pending and uses due_date as dueDate", async () => {
+    const { service, repos } = makeService();
+    const result: TransactionInput = { ...cashPast, due_date: "2099-12-31", already_paid: false };
+    await service.persist(result, userId, "raw");
+
+    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.status).toBe("pending");
+    expect(created.dueDate).toEqual(new Date(Date.UTC(2099, 11, 31)));
+    expect(created.settledAt ?? null).toBeNull();
+  });
+
+  it("settles when already_paid is true even with a future due_date", async () => {
+    const { service, repos } = makeService();
+    const result: TransactionInput = { ...cashPast, due_date: "2099-12-31", already_paid: true };
+    await service.persist(result, userId, "raw");
+
+    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.status).toBe("settled");
+  });
+
+  it("stays pending for a card purchase regardless of already_paid", async () => {
+    const { service, repos } = makeService();
+    await service.persist({ ...baseResult, already_paid: true }, userId, "raw");
+
+    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.status).toBe("pending");
+  });
+});

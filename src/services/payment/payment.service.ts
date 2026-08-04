@@ -1,10 +1,12 @@
 import type {
   ICardInvoiceRepository,
   IPaymentEventRepository,
+  IRecurringBillRepository,
   ITransactionRepository,
 } from "@/types/repository";
-import type { PaymentEvent } from "@/db/schema";
+import type { PaymentEvent, Transaction } from "@/db/schema";
 import { PaymentError } from "@/services/payment/errors";
+import { materializedBill, nextOccurrence } from "@/services/recurring/recurring";
 
 export type PayableType = PaymentEvent["targetType"];
 
@@ -53,6 +55,7 @@ export class PaymentService {
     private readonly transactionRepo: ITransactionRepository,
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
     private readonly paymentEventRepo: IPaymentEventRepository,
+    private readonly recurringBillRepo: IRecurringBillRepository,
   ) {}
 
   async listPayables(userId: number): Promise<Payable[]> {
@@ -108,6 +111,11 @@ export class PaymentService {
       throw new PaymentError("Pagamento não encontrado ou já desfeito.");
     }
 
+    if (event.targetType === "transaction") {
+      const transaction = await this.transactionRepo.findById(userId, event.targetId);
+      if (transaction) await this.rollBackRecurringChain(userId, transaction);
+    }
+
     await this.paymentEventRepo.void(event.id);
 
     if (event.targetType === "transaction") {
@@ -121,6 +129,21 @@ export class PaymentService {
     }
 
     return { type: event.targetType, description: event.description, amountCents: event.amountCents };
+  }
+
+  private async rollBackRecurringChain(userId: number, transaction: Transaction): Promise<void> {
+    if (transaction.source !== "recurring" || !transaction.recurringBillId) return;
+
+    const occurrences = await this.transactionRepo.listByRecurringBill(userId, transaction.recurringBillId);
+    const later = occurrences.filter(
+      (o) => o.dueDate.getTime() > transaction.dueDate.getTime() && o.status !== "cancelled",
+    );
+    if (later.some((o) => o.status === "settled")) {
+      throw new PaymentError("Desfaça primeiro o pagamento do mês mais recente.");
+    }
+    for (const occurrence of later) {
+      await this.transactionRepo.update(userId, occurrence.id, { status: "cancelled" });
+    }
   }
 
   private async payTransaction(
@@ -151,6 +174,8 @@ export class PaymentService {
       settledAt: now,
     });
 
+    await this.advanceRecurring(userId, transaction);
+
     return {
       eventId: event.id,
       type: "transaction",
@@ -158,6 +183,20 @@ export class PaymentService {
       amountCents: actual,
       fullyPaid: true,
     };
+  }
+
+  private async advanceRecurring(userId: number, transaction: Transaction): Promise<void> {
+    if (transaction.source !== "recurring" || !transaction.recurringBillId) return;
+
+    const bill = await this.recurringBillRepo.findById(userId, transaction.recurringBillId);
+    if (!bill?.isActive) return;
+
+    const nextDue = nextOccurrence(transaction.dueDate, bill.dueDay);
+    const occurrences = await this.transactionRepo.listByRecurringBill(userId, bill.id);
+    const alreadyRolled = occurrences.some(
+      (o) => o.status !== "cancelled" && o.dueDate.getTime() >= nextDue.getTime(),
+    );
+    if (!alreadyRolled) await this.transactionRepo.create(materializedBill(bill, nextDue));
   }
 
   private async payInvoice(

@@ -48,6 +48,18 @@ export type TransactionSettlementPatch = Partial<
   Pick<Transaction, "status" | "actualAmountCents" | "settledAt">
 >;
 
+export interface SpendingFilter {
+  userId: number;
+  from: Date;
+  to: Date;
+  direction: "in" | "out";
+}
+
+export interface SpendingRow {
+  label: string | null;
+  amountCents: number;
+}
+
 export type CardInvoiceSettlementPatch = Partial<
   Pick<CardInvoice, "status" | "paidAmountCents" | "paidAt">
 >;
@@ -58,7 +70,16 @@ export interface ITransactionRepository {
   findById(userId: number, id: number): Promise<Transaction | null>;
   listPayable(userId: number): Promise<Transaction[]>;
   listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]>;
+  listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]>;
   update(userId: number, id: number, patch: TransactionSettlementPatch): Promise<void>;
+}
+
+export interface ISpendingRepository {
+  sumTotal(filter: SpendingFilter): Promise<number>;
+  sumByCategory(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByMantra(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByCard(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByPaymentMethod(filter: SpendingFilter): Promise<SpendingRow[]>;
 }
 
 export interface ICardInvoiceRepository {
@@ -81,6 +102,8 @@ export interface IInstallmentPurchaseRepository {
 export interface IRecurringBillRepository {
   create(data: NewRecurringBill): Promise<RecurringBill>;
   listActive(userId: number): Promise<RecurringBill[]>;
+  findById(userId: number, id: number): Promise<RecurringBill | null>;
+  deactivate(userId: number, id: number): Promise<void>;
 }
 
 export interface IPendingConversationRepository {

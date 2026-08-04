@@ -20,7 +20,7 @@ interface ChatCompletionResponse {
 export class OpenAICompatibleClient implements ILLMClient {
   constructor(
     private readonly config: LLMClientConfig,
-    private readonly fetchFn: typeof fetch = fetch,
+    private readonly fetchFn: typeof fetch = fetch.bind(globalThis),
   ) {}
 
   async callWithTools(

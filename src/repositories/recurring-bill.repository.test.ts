@@ -73,4 +73,40 @@ describe("RecurringBillRepository", () => {
     expect(active).toHaveLength(1);
     expect(active.find((b) => b.id === inactive.id)).toBeUndefined();
   });
+
+  it("findById returns the bill scoped to the user", async () => {
+    const { repo, userId, categoryId, mantraId } = await setup(7003);
+    const bill = await repo.create({
+      userId,
+      description: "Internet",
+      kind: "fixed",
+      expectedAmountCents: 29900,
+      dueDay: 15,
+      paymentMethod: "pix",
+      categoryId,
+      mantraId,
+    });
+
+    expect(await repo.findById(userId, bill.id)).toMatchObject({ id: bill.id, description: "Internet" });
+    expect(await repo.findById(userId + 999, bill.id)).toBeNull();
+  });
+
+  it("deactivate flips isActive to false", async () => {
+    const { repo, userId, categoryId, mantraId } = await setup(7004);
+    const bill = await repo.create({
+      userId,
+      description: "Academia",
+      kind: "subscription",
+      expectedAmountCents: 9900,
+      dueDay: 5,
+      paymentMethod: "debit",
+      categoryId,
+      mantraId,
+    });
+
+    await repo.deactivate(userId, bill.id);
+
+    expect(await repo.findById(userId, bill.id)).toMatchObject({ isActive: false });
+    expect(await repo.listActive(userId)).toHaveLength(0);
+  });
 });
