@@ -8,6 +8,7 @@ import { TransactionService } from "@/services/transaction/transaction.service";
 import { PaymentService } from "@/services/payment/payment.service";
 import { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import { InstallmentService } from "@/services/installment/installment.service";
+import { AnalyticsService } from "@/services/analytics/analytics.service";
 import { PaymentEventRepository } from "@/repositories/payment-event.repository";
 import { RecurringBillRepository } from "@/repositories/recurring-bill.repository";
 import { InstallmentPurchaseRepository } from "@/repositories/installment-purchase.repository";
@@ -70,6 +71,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     transactionRepo,
     cardInvoiceRepo,
   );
+  const analyticsService = new AnalyticsService(transactionRepo);
 
   return new MessageHandler(
     new UserRepository(db),
@@ -81,5 +83,6 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     recurringService,
     installmentService,
     new PendingConversationRepository(db),
+    analyticsService,
   );
 }

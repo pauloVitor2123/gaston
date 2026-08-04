@@ -76,6 +76,22 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({ kind: "undo", eventId: 900 });
   });
 
+  it("returns a query turn when the model calls query_spending", async () => {
+    const { agent } = agentReturning({
+      toolCall: {
+        name: "query_spending",
+        arguments: { group_by: "category", from: "2026-08-01", to: "2026-08-31" },
+      },
+    });
+
+    const turn = await agent.run([{ role: "user", content: "gastos por categoria desse mês" }], context);
+
+    expect(turn).toEqual({
+      kind: "query",
+      params: { group_by: "category", from: "2026-08-01", to: "2026-08-31" },
+    });
+  });
+
   it("passes the system prompt and tool definition to the client", async () => {
     const { agent, llm } = agentReturning({ content: "?" });
 

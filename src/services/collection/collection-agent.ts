@@ -20,6 +20,11 @@ import {
   recordInstallmentArgsSchema,
   type RecordInstallmentArgs,
 } from "@/services/installment/tools";
+import {
+  QUERY_SPENDING_TOOL,
+  querySpendingArgsSchema,
+  type QuerySpendingArgs,
+} from "@/services/analytics/query";
 
 export type AgentTurn =
   | { kind: "draft"; draft: TransactionDraft }
@@ -28,6 +33,7 @@ export type AgentTurn =
   | { kind: "recurring"; bill: RecordRecurringBillArgs }
   | { kind: "delete_recurring"; billId: number }
   | { kind: "installment"; purchase: RecordInstallmentArgs }
+  | { kind: "query"; params: QuerySpendingArgs }
   | { kind: "question"; text: string };
 
 const TOOLS = [
@@ -37,6 +43,7 @@ const TOOLS = [
   RECORD_RECURRING_BILL_TOOL,
   DELETE_RECURRING_BILL_TOOL,
   RECORD_INSTALLMENT_TOOL,
+  QUERY_SPENDING_TOOL,
 ];
 const FALLBACK_QUESTION = "Me conta o valor e o que foi, por favor.";
 
@@ -81,6 +88,11 @@ export class CollectionAgent {
     if (toolCall?.name === RECORD_INSTALLMENT_TOOL.name) {
       const parsed = recordInstallmentArgsSchema.safeParse(toolCall.arguments);
       if (parsed.success) return { kind: "installment", purchase: parsed.data };
+    }
+
+    if (toolCall?.name === QUERY_SPENDING_TOOL.name) {
+      const parsed = querySpendingArgsSchema.safeParse(toolCall.arguments);
+      if (parsed.success) return { kind: "query", params: parsed.data };
     }
 
     return { kind: "question", text: content?.trim() || FALLBACK_QUESTION };

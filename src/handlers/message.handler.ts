@@ -15,9 +15,12 @@ import type { RecurringBillService } from "@/services/recurring/recurring-bill.s
 import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
 import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
 import type { RecordInstallmentArgs } from "@/services/installment/tools";
-import type { PendingConversation, RecurringBill, User } from "@/db/schema";
+import type { Category, PendingConversation, RecurringBill, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
+import { resolveCategory } from "@/services/collection/category-rules";
+import type { AnalyticsService, SpendingReport } from "@/services/analytics/analytics.service";
+import type { QuerySpendingArgs } from "@/services/analytics/query";
 import { formatReais } from "@/services/money";
 
 type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
@@ -41,6 +44,7 @@ const CONFIRM_TTL_MS = 10 * 60 * 1000;
 const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
 const RECENT_PAYMENTS_LIMIT = 5;
+const FALLBACK_CATEGORY = "Outros";
 
 const EXAMPLES =
   '• "almoço 35 no nubank"\n' +
@@ -91,6 +95,7 @@ export class MessageHandler {
     private readonly recurringService: RecurringBillService,
     private readonly installmentService: InstallmentService,
     private readonly pendingRepo: IPendingConversationRepository,
+    private readonly analyticsService: AnalyticsService,
   ) {}
 
   async handle(chatId: number, text: string, senderName: string): Promise<string> {
@@ -237,7 +242,7 @@ export class MessageHandler {
 
     if (turn.kind === "draft") {
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordDraft(turn.draft, user, sanitized, today, cardNames);
+      return this.recordDraft(turn.draft, user, sanitized, today, cardNames, categories);
     }
     if (turn.kind === "pay") {
       return this.startPaymentConfirm(user, pending, turn.target, turn.amountCents, payables);
@@ -256,6 +261,10 @@ export class MessageHandler {
       if (pending) await this.pendingRepo.delete(pending.id);
       return this.recordInstallment(turn.purchase, user);
     }
+    if (turn.kind === "query") {
+      const report = await this.analyticsService.aggregate(user.id, turn.params);
+      return formatSpendingReport(turn.params, report);
+    }
 
     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
     const cycles = (draft?.cycles ?? 0) + 1;
@@ -268,6 +277,7 @@ export class MessageHandler {
     rawMessage: string,
     today: string,
     cardNames: string[],
+    categories: Category[],
   ): Promise<string> {
     const direction: Direction = draft.intent === "record_income" ? "in" : "out";
     const matchedCard = cardNames.find(
@@ -281,6 +291,8 @@ export class MessageHandler {
       warning = UNKNOWN_CARD_WARNING;
     }
 
+    const category = resolveCategory(draft.category_name, draft.description, categories);
+
     const input: TransactionInput = {
       direction,
       description: draft.description,
@@ -290,7 +302,7 @@ export class MessageHandler {
       already_paid: draft.already_paid,
       payment_method: paymentMethod,
       card_name: matchedCard,
-      category_name: draft.category_name,
+      category_name: category?.name ?? FALLBACK_CATEGORY,
       mantra: applyMantraRules(draft.description),
     };
 
@@ -465,6 +477,25 @@ export class MessageHandler {
     }
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function formatSpendingReport(params: QuerySpendingArgs, report: SpendingReport): string {
+  const title = (params.direction ?? "out") === "in" ? "Recebido" : "Gastos";
+  const period = `${formatDayMonth(parseUtcDate(params.from))}–${formatDayMonth(parseUtcDate(params.to))}`;
+  const header = `📊 ${title} ${period} (caixa)`;
+
+  if (report.rows.length === 0 || report.totalCents === 0) {
+    return `${header}\n\nNada encontrado nesse período.`;
+  }
+  if (params.group_by === "none") {
+    return `${header}\n\nTotal: ${formatReais(report.totalCents)}`;
+  }
+
+  const lines = report.rows.map((row) => {
+    const pct = Math.round((row.amountCents / report.totalCents) * 100);
+    return `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
+  });
+  return `${header}\n${lines.join("\n")}\n\nTotal: ${formatReais(report.totalCents)} · maior: ${report.rows[0]!.label}`;
 }
 
 function commandOf(text: string): string {

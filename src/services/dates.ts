@@ -20,6 +20,10 @@ export function addMonthsUtc(date: Date, months: number): Date {
   return utcDayClamped(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate());
 }
 
+export function addDaysUtc(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 export function formatDayMonth(date: Date): string {
   const day = String(date.getUTCDate()).padStart(2, "0");
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");

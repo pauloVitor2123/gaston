@@ -13,6 +13,7 @@ import { PaymentError } from "@/services/payment/errors";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
+import type { AnalyticsService } from "@/services/analytics/analytics.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
 
@@ -131,6 +132,9 @@ function makeHandler(
   const transactionService = {
     persist: vi.fn().mockResolvedValue(mockTransaction),
   } as unknown as TransactionService;
+  const analytics = {
+    aggregate: vi.fn().mockResolvedValue({ rows: [], totalCents: 0 }),
+  } as unknown as AnalyticsService;
 
   const handler = new MessageHandler(
     repos.userRepo,
@@ -142,8 +146,9 @@ function makeHandler(
     recurring,
     installment,
     repos.pendingRepo,
+    analytics,
   );
-  return { handler, repos, agent, transactionService, payment, recurring, installment };
+  return { handler, repos, agent, transactionService, payment, recurring, installment, analytics };
 }
 
 function pendingDraft(id: number, cycles: number): PendingConversation {
@@ -238,6 +243,35 @@ describe("MessageHandler — record flow", () => {
     expect(reply).toContain("pendente");
   });
 
+  it("infers the category from the description when the draft omits it", async () => {
+    const noCategory: TransactionDraft = {
+      intent: "record_expense",
+      description: "almoço com amigos",
+      amount_cents: 3500,
+      payment_method: "pix",
+    };
+    const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: noCategory });
+    (repos.categoryRepo.listByUser as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 1, userId: 1, name: "Alimentação", synonyms: ["almoço"] },
+    ]);
+    await handler.handle(100, "almoço com amigos 35 no pix", "Test User");
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.category_name).toBe("Alimentação");
+  });
+
+  it("falls back to 'Outros' when neither draft nor description resolve a category", async () => {
+    const noCategory: TransactionDraft = {
+      intent: "record_expense",
+      description: "comprei algo na loja",
+      amount_cents: 5000,
+      payment_method: "pix",
+    };
+    const { handler, transactionService } = makeHandler({ kind: "draft", draft: noCategory });
+    await handler.handle(100, "gastei 50 numa loja", "Test User");
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.category_name).toBe("Outros");
+  });
+
   it("falls back to cash and warns when the drafted card is not registered", async () => {
     const unknownCard: TransactionDraft = { ...fullDraft, payment_method: "card", card_name: "Santander" };
     const { handler, transactionService } = makeHandler({ kind: "draft", draft: unknownCard });
@@ -245,6 +279,55 @@ describe("MessageHandler — record flow", () => {
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.payment_method).toBe("cash");
     expect(reply.toLowerCase()).toContain("cartão");
+  });
+});
+
+describe("MessageHandler — query flow", () => {
+  it("formats a category breakdown with percentages, total and top", async () => {
+    const { handler, analytics } = makeHandler({
+      kind: "query",
+      params: { group_by: "category", from: "2026-08-01", to: "2026-08-31" },
+    });
+    (analytics.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rows: [
+        { label: "Alimentação", amountCents: 45000 },
+        { label: "Transporte", amountCents: 30000 },
+      ],
+      totalCents: 75000,
+    });
+    const reply = await handler.handle(100, "gastos por categoria desse mês", "Test User");
+    expect(analytics.aggregate).toHaveBeenCalledWith(1, {
+      group_by: "category",
+      from: "2026-08-01",
+      to: "2026-08-31",
+    });
+    expect(reply).toContain("Alimentação — R$ 450,00 (60%)");
+    expect(reply).toContain("Transporte — R$ 300,00 (40%)");
+    expect(reply).toContain("Total: R$ 750,00");
+    expect(reply).toContain("maior: Alimentação");
+  });
+
+  it("reports an empty period without dividing by zero", async () => {
+    const { handler } = makeHandler({
+      kind: "query",
+      params: { group_by: "category", from: "2026-08-01", to: "2026-08-31" },
+    });
+    const reply = await handler.handle(100, "quanto gastei", "Test User");
+    expect(reply.toLowerCase()).toContain("nada encontrado");
+  });
+
+  it("returns a single total for group_by 'none'", async () => {
+    const { handler, analytics } = makeHandler({
+      kind: "query",
+      params: { group_by: "none", from: "2026-08-01", to: "2026-08-31" },
+    });
+    (analytics.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rows: [{ label: "Total", amountCents: 150000 }],
+      totalCents: 150000,
+    });
+    const reply = await handler.handle(100, "quanto gastei esse mês", "Test User");
+    expect(reply).toContain("Total: R$ 1500,00");
+    expect(reply).not.toContain("%");
   });
 });
 
@@ -533,6 +616,7 @@ describe("MessageHandler — commands & robustness", () => {
     const repos = makeRepos();
     const agent = { run: vi.fn().mockRejectedValue(new Error("LLM down")) } as unknown as CollectionAgent;
     const transactionService = { persist: vi.fn() } as unknown as TransactionService;
+    const analytics = { aggregate: vi.fn() } as unknown as AnalyticsService;
     const handler = new MessageHandler(
       repos.userRepo,
       repos.categoryRepo,
@@ -543,6 +627,7 @@ describe("MessageHandler — commands & robustness", () => {
       makeRecurringService(),
       makeInstallmentService(),
       repos.pendingRepo,
+      analytics,
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");
     expect(reply).toContain("problema");
