@@ -21,7 +21,8 @@ import { applyMantraRules } from "@/services/collection/mantra-rules";
 import { resolveCategory } from "@/services/collection/category-rules";
 import type { AnalyticsService, SpendingReport } from "@/services/analytics/analytics.service";
 import type { QuerySpendingArgs } from "@/services/analytics/query";
-import { formatReais } from "@/services/money";
+import type { BalanceService, BalanceSummary } from "@/services/balance/balance.service";
+import { formatReais, parseBRLToCents } from "@/services/money";
 
 type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 type PaymentConfirmState = {
@@ -63,6 +64,7 @@ const HELP =
   "🤖 Gaston — o que eu faço\n\n" +
   "Comandos:\n" +
   "/status — situação do mês (atrasados e a vencer)\n" +
+  "/saldo — quanto você tem e a projeção do fim do mês (defina com /saldo 5000)\n" +
   "/pendentes — o que você ainda tem a pagar\n" +
   "/cancelar — abandona um registro em andamento\n" +
   "/help — mostra esta ajuda\n\n" +
@@ -95,6 +97,7 @@ export class MessageHandler {
     private readonly installmentService: InstallmentService,
     private readonly pendingRepo: IPendingConversationRepository,
     private readonly analyticsService: AnalyticsService,
+    private readonly balanceService: BalanceService,
   ) {}
 
   async handle(chatId: number, text: string, senderName: string): Promise<string> {
@@ -125,6 +128,7 @@ export class MessageHandler {
     if (command === "/help") return HELP;
     if (command === "/pendentes") return this.listPending(user);
     if (command === "/status") return this.showStatus(user);
+    if (command === "/saldo") return this.handleSaldo(user, text);
 
     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
     let activePending = pending;
@@ -151,10 +155,18 @@ export class MessageHandler {
   }
 
   private async showStatus(user: User): Promise<string> {
-    const payables = await this.paymentService.listPayables(user.id);
-    if (payables.length === 0) return "📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉";
+    const today = todayInTimeZone(user.timezone);
+    const [payables, summary] = await Promise.all([
+      this.paymentService.listPayables(user.id),
+      this.balanceService.summarize(user, today),
+    ]);
+    const footer = balanceFooter(summary);
 
-    const todayMs = parseUtcDate(todayInTimeZone(user.timezone)).getTime();
+    if (payables.length === 0) {
+      return `📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉\n${footer}`;
+    }
+
+    const todayMs = parseUtcDate(today).getTime();
     const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
     const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
 
@@ -166,7 +178,28 @@ export class MessageHandler {
       sections.push(`🟡 A vencer (${formatReais(sumPayables(upcoming))}):\n${upcoming.map(payableLine).join("\n")}`);
     }
 
-    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}`;
+    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}\n${footer}`;
+  }
+
+  private async handleSaldo(user: User, text: string): Promise<string> {
+    const today = todayInTimeZone(user.timezone);
+    const arg = text.trim().split(/\s+/).slice(1).join(" ").trim();
+
+    if (arg) {
+      const cents = parseBRLToCents(arg);
+      if (cents === null) {
+        return "Não entendi o valor. Use assim: /saldo 5000 (ou /saldo 5.000,50).";
+      }
+      const now = new Date();
+      await this.userRepo.setBalance(user.id, cents, now);
+      const summary = await this.balanceService.summarize(
+        { ...user, balanceCents: cents, balanceSetAt: now },
+        today,
+      );
+      return `✅ Saldo definido: ${formatReais(cents)}.\n\n${formatBalance(summary)}`;
+    }
+
+    return formatBalance(await this.balanceService.summarize(user, today));
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -241,7 +274,8 @@ export class MessageHandler {
 
     if (turn.kind === "draft") {
       const category = resolveCategory(turn.draft.category_name, turn.draft.description, categories);
-      if (!category && categories.length > 0) {
+      const needsCategory = turn.draft.intent !== "record_income";
+      if (needsCategory && !category && categories.length > 0) {
         const question = categoryQuestion(categories);
         const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
         return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
@@ -480,6 +514,27 @@ export class MessageHandler {
     }
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function balanceFooter(summary: BalanceSummary): string {
+  return `💰 Na conta hoje: ${formatReais(summary.onHand)} · 📈 Projeção fim do mês: ${formatReais(summary.projected)}`;
+}
+
+function formatBalance(summary: BalanceSummary): string {
+  const lines = [
+    `💰 Na conta hoje: ${formatReais(summary.onHand)}`,
+    `📈 Projeção fim do mês: ${formatReais(summary.projected)}`,
+    "",
+    "Como cheguei aí:",
+    `• Saldo definido: ${formatReais(summary.base)}`,
+    `• + Recebido desde então: ${formatReais(summary.receivedSince)}`,
+    `• − Gasto desde então: ${formatReais(summary.spentSince)}`,
+    `• + A receber no mês: ${formatReais(summary.toReceive)}`,
+    `• − A pagar no mês: ${formatReais(summary.toPay)}`,
+    "",
+    "Ajuste quando quiser: /saldo <valor>",
+  ];
+  return `📊 Saldo\n\n${lines.join("\n")}`;
 }
 
 function categoryQuestion(categories: Category[]): string {
