@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5907edc4-5aad-4939-b7c5-b4e7b430074e",
+  "id": "e1ef6102-93d1-45ef-8ea9-1fbeb1dc923d",
   "prevId": "e469c85b-3162-4c6b-b81e-177c0d829c34",
   "tables": {
     "users": {
@@ -48,9 +48,8 @@
           "name": "balance_set_at",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(unixepoch())"
+          "notNull": false,
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",

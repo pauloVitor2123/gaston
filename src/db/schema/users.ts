@@ -7,9 +7,7 @@ export const users = sqliteTable("users", {
   name: text("name"),
   timezone: text("timezone").notNull().default("America/Sao_Paulo"),
   balanceCents: integer("balance_cents").notNull().default(0),
-  balanceSetAt: integer("balance_set_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
+  balanceSetAt: integer("balance_set_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
