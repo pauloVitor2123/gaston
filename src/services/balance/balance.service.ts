@@ -1,5 +1,4 @@
-import type { IBalanceRepository } from "@/types/repository";
-import type { Payable } from "@/services/payment/payment.service";
+import type { IBalanceRepository, IPayableLister } from "@/types/repository";
 import type { User } from "@/db/schema";
 import { parseUtcDate, utcDayClamped } from "@/services/dates";
 
@@ -11,10 +10,6 @@ export interface BalanceSummary {
   toReceive: number;
   toPay: number;
   projected: number;
-}
-
-export interface IPayableLister {
-  listPayables(userId: number): Promise<Payable[]>;
 }
 
 function firstOfNextMonth(today: string): Date {

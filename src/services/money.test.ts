@@ -35,4 +35,9 @@ describe("parseBRLToCents", () => {
     expect(parseBRLToCents("")).toBeNull();
     expect(parseBRLToCents("-10")).toBeNull();
   });
+
+  it("rejects values with more than two decimal places instead of rounding silently", () => {
+    expect(parseBRLToCents("1.2345")).toBeNull();
+    expect(parseBRLToCents("5000,505")).toBeNull();
+  });
 });

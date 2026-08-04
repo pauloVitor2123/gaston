@@ -1,3 +1,4 @@
+import type { Payable } from "@/services/payment/payment.service";
 import type {
   Card,
   CardInvoice,
@@ -86,6 +87,10 @@ export interface ISpendingRepository {
 export interface IBalanceRepository {
   sumSettledSince(userId: number, direction: "in" | "out", since: Date): Promise<number>;
   sumPendingUntil(userId: number, direction: "in" | "out", until: Date): Promise<number>;
+}
+
+export interface IPayableLister {
+  listPayables(userId: number): Promise<Payable[]>;
 }
 
 export interface ICardInvoiceRepository {

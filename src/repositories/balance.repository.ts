@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { transactions } from "@/db/schema";
 import type { IBalanceRepository } from "@/types/repository";
@@ -21,7 +21,7 @@ export class BalanceRepository implements IBalanceRepository {
           eq(transactions.userId, userId),
           eq(transactions.direction, direction),
           eq(transactions.status, "settled"),
-          gt(transactions.settledAt, since),
+          gte(transactions.settledAt, since),
         ),
       );
     return row?.total ?? 0;

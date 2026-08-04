@@ -18,6 +18,9 @@ export function parseBRLToCents(raw: string): number | null {
     if (isThousands) s = s.replace(/\./g, "");
   }
 
+  const decimalStart = s.indexOf(".");
+  if (decimalStart !== -1 && s.length - decimalStart - 1 > 2) return null;
+
   const value = Number(s);
   if (!Number.isFinite(value) || value < 0) return null;
   return Math.round(value * 100);

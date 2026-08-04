@@ -35,6 +35,14 @@ describe("BalanceRepository", () => {
     expect(await repo.sumSettledSince(userId, "out", SINCE)).toBe(12000);
   });
 
+  it("sumSettledSince includes a row settled exactly at 'since' (inclusive lower bound)", async () => {
+    const { txRepo, repo, userId, base } = await setup(6004);
+    const d = new Date("2026-08-05");
+    await txRepo.create({ ...base, direction: "in", description: "no limite", status: "settled", settledAt: SINCE, actualAmountCents: 5000, expectedAmountCents: 5000, accrualDate: d, dueDate: d });
+
+    expect(await repo.sumSettledSince(userId, "in", SINCE)).toBe(5000);
+  });
+
   it("sumPendingUntil counts only pending rows of the direction due before 'until'", async () => {
     const { txRepo, repo, userId, base } = await setup(6002);
 

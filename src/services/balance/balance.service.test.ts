@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { IBalanceRepository } from "@/types/repository";
+import type { IBalanceRepository, IPayableLister } from "@/types/repository";
 import type { Payable } from "@/services/payment/payment.service";
 import type { User } from "@/db/schema";
-import { BalanceService, type IPayableLister } from "@/services/balance/balance.service";
+import { BalanceService } from "@/services/balance/balance.service";
 
 const user = {
   id: 1,
