@@ -18,6 +18,7 @@ import { CategoryRepository } from "@/repositories/category.repository";
 import { CardRepository } from "@/repositories/card.repository";
 import { MantraRepository } from "@/repositories/mantra.repository";
 import { TransactionRepository } from "@/repositories/transaction.repository";
+import { SpendingRepository } from "@/repositories/spending.repository";
 import { CardInvoiceRepository } from "@/repositories/card-invoice.repository";
 import { PendingConversationRepository } from "@/repositories/pending-conversation.repository";
 
@@ -71,7 +72,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     transactionRepo,
     cardInvoiceRepo,
   );
-  const analyticsService = new AnalyticsService(transactionRepo);
+  const analyticsService = new AnalyticsService(new SpendingRepository(db));
 
   return new MessageHandler(
     new UserRepository(db),

@@ -60,7 +60,7 @@ Para registrar, campos obrigatórios: amount_cents (centavos, inteiro) e descrip
 Opcionais — só preencha se o usuário informar; só pergunte em ambiguidade real, no máximo uma vez:
 - payment_method: "card", "pix", "cash" ou "debit" (padrão implícito: dinheiro).
 - card_name: use apenas um cartão da lista; cartão fora da lista → deixe em branco.
-- category_name: sempre escolha a categoria mais provável da lista. Só deixe em branco e faça UMA pergunta curta quando a mensagem for genuinamente ambígua (não der pra inferir a categoria).
+- category_name: escolha a categoria mais provável da lista quando der pra inferir com segurança; se não der, deixe em branco (o usuário será perguntado com a lista de categorias).
 - date: YYYY-MM-DD (padrão: ${context.today}).
 - due_date: YYYY-MM-DD — só para obrigação futura a pagar (ex.: "pix pra mãe dia 10", "boleto vence dia 15").
 - already_paid: false se o usuário ainda não pagou (ex.: "venceu e não paguei"); true ou omitido se já aconteceu/já pagou.

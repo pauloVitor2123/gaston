@@ -48,11 +48,8 @@ export type TransactionSettlementPatch = Partial<
   Pick<Transaction, "status" | "actualAmountCents" | "settledAt">
 >;
 
-export type SpendingDimension = "category" | "mantra" | "card" | "payment_method" | "none";
-
-export interface SpendingQuery {
+export interface SpendingFilter {
   userId: number;
-  groupBy: SpendingDimension;
   from: Date;
   to: Date;
   direction: "in" | "out";
@@ -75,7 +72,14 @@ export interface ITransactionRepository {
   listByInvoice(userId: number, cardInvoiceId: number): Promise<Transaction[]>;
   listByRecurringBill(userId: number, recurringBillId: number): Promise<Transaction[]>;
   update(userId: number, id: number, patch: TransactionSettlementPatch): Promise<void>;
-  sumByDimension(query: SpendingQuery): Promise<SpendingRow[]>;
+}
+
+export interface ISpendingRepository {
+  sumTotal(filter: SpendingFilter): Promise<number>;
+  sumByCategory(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByMantra(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByCard(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByPaymentMethod(filter: SpendingFilter): Promise<SpendingRow[]>;
 }
 
 export interface ICardInvoiceRepository {

@@ -44,7 +44,6 @@ const CONFIRM_TTL_MS = 10 * 60 * 1000;
 const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
 const RECENT_PAYMENTS_LIMIT = 5;
-const FALLBACK_CATEGORY = "Outros";
 
 const EXAMPLES =
   '• "almoço 35 no nubank"\n' +
@@ -241,8 +240,14 @@ export class MessageHandler {
     });
 
     if (turn.kind === "draft") {
+      const category = resolveCategory(turn.draft.category_name, turn.draft.description, categories);
+      if (!category && categories.length > 0) {
+        const question = categoryQuestion(categories);
+        const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
+        return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
+      }
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordDraft(turn.draft, user, sanitized, today, cardNames, categories);
+      return this.recordDraft(turn.draft, user, sanitized, today, cardNames, category?.name);
     }
     if (turn.kind === "pay") {
       return this.startPaymentConfirm(user, pending, turn.target, turn.amountCents, payables);
@@ -277,7 +282,7 @@ export class MessageHandler {
     rawMessage: string,
     today: string,
     cardNames: string[],
-    categories: Category[],
+    categoryName: string | undefined,
   ): Promise<string> {
     const direction: Direction = draft.intent === "record_income" ? "in" : "out";
     const matchedCard = cardNames.find(
@@ -291,8 +296,6 @@ export class MessageHandler {
       warning = UNKNOWN_CARD_WARNING;
     }
 
-    const category = resolveCategory(draft.category_name, draft.description, categories);
-
     const input: TransactionInput = {
       direction,
       description: draft.description,
@@ -302,7 +305,7 @@ export class MessageHandler {
       already_paid: draft.already_paid,
       payment_method: paymentMethod,
       card_name: matchedCard,
-      category_name: category?.name ?? FALLBACK_CATEGORY,
+      category_name: categoryName,
       mantra: applyMantraRules(draft.description),
     };
 
@@ -477,6 +480,10 @@ export class MessageHandler {
     }
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function categoryQuestion(categories: Category[]): string {
+  return `Em qual categoria isso entra? Escolha uma: ${categories.map((c) => c.name).join(", ")}.`;
 }
 
 function formatSpendingReport(params: QuerySpendingArgs, report: SpendingReport): string {

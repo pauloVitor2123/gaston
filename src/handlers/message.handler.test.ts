@@ -219,6 +219,7 @@ describe("MessageHandler — record flow", () => {
       description: "pix pra mãe",
       amount_cents: 1000,
       payment_method: "pix",
+      category_name: "Alimentação",
       due_date: "2099-12-10",
       already_paid: false,
     };
@@ -236,6 +237,7 @@ describe("MessageHandler — record flow", () => {
       description: "boleto da luz",
       amount_cents: 15000,
       payment_method: "pix",
+      category_name: "Alimentação",
       already_paid: false,
     };
     const { handler } = makeHandler({ kind: "draft", draft: unpaidNoDate });
@@ -259,17 +261,35 @@ describe("MessageHandler — record flow", () => {
     expect(persisted.category_name).toBe("Alimentação");
   });
 
-  it("falls back to 'Outros' when neither draft nor description resolve a category", async () => {
+  it("asks for a category listing the available ones when it can't be resolved", async () => {
     const noCategory: TransactionDraft = {
       intent: "record_expense",
       description: "comprei algo na loja",
       amount_cents: 5000,
       payment_method: "pix",
     };
-    const { handler, transactionService } = makeHandler({ kind: "draft", draft: noCategory });
-    await handler.handle(100, "gastei 50 numa loja", "Test User");
+    const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: noCategory });
+    const reply = await handler.handle(100, "gastei 50 numa loja", "Test User");
+    expect(transactionService.persist).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("categoria");
+    expect(reply).toContain("Alimentação");
+    const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.stateJson.kind).toBe("draft");
+  });
+
+  it("does not block on category when the user has no categories yet", async () => {
+    const noCategory: TransactionDraft = {
+      intent: "record_expense",
+      description: "algo genérico",
+      amount_cents: 5000,
+      payment_method: "pix",
+    };
+    const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: noCategory });
+    (repos.categoryRepo.listByUser as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await handler.handle(100, "gastei 50", "Test User");
+    expect(transactionService.persist).toHaveBeenCalledOnce();
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(persisted.category_name).toBe("Outros");
+    expect(persisted.category_name).toBeUndefined();
   });
 
   it("falls back to cash and warns when the drafted card is not registered", async () => {

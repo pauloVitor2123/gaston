@@ -36,14 +36,7 @@ async function setup(chatId: number) {
     categoryId: category.id,
     mantraId: mantra.id,
   };
-  return {
-    repo: new TransactionRepository(db),
-    db,
-    userId: user.id,
-    cardId: card.id,
-    categoryId: category.id,
-    base,
-  };
+  return { repo: new TransactionRepository(db), userId: user.id, cardId: card.id, base };
 }
 
 describe("TransactionRepository", () => {
@@ -117,87 +110,5 @@ describe("TransactionRepository", () => {
     const updated = await repo.findById(userId, tx.id);
     expect(updated?.status).toBe("settled");
     expect(updated?.actualAmountCents).toBe(1234);
-  });
-
-  it("sumByDimension groups by category over a due-date range, using actual over expected", async () => {
-    const { repo, db, base, userId } = await setup(4008);
-    const transporte = await new CategoryRepository(db).create({
-      userId,
-      name: "Transporte",
-      synonyms: [],
-    });
-    const inRange = new Date("2026-08-05");
-    const settled = new Date("2026-08-10");
-
-    await repo.create({
-      ...base,
-      description: "mercado",
-      expectedAmountCents: 45000,
-      accrualDate: inRange,
-      dueDate: inRange,
-    });
-    await repo.create({
-      ...base,
-      description: "uber",
-      categoryId: transporte.id,
-      expectedAmountCents: 30000,
-      actualAmountCents: 32000,
-      status: "settled",
-      accrualDate: settled,
-      dueDate: settled,
-    });
-    await repo.create({
-      ...base,
-      description: "fora do intervalo",
-      expectedAmountCents: 99900,
-      accrualDate: new Date("2026-09-02"),
-      dueDate: new Date("2026-09-02"),
-    });
-    await repo.create({
-      ...base,
-      description: "cancelado",
-      status: "cancelled",
-      expectedAmountCents: 5000,
-      accrualDate: inRange,
-      dueDate: inRange,
-    });
-    await repo.create({
-      ...base,
-      description: "recebimento",
-      direction: "in",
-      expectedAmountCents: 70000,
-      accrualDate: inRange,
-      dueDate: inRange,
-    });
-
-    const rows = await repo.sumByDimension({
-      userId,
-      groupBy: "category",
-      from: new Date(Date.UTC(2026, 7, 1)),
-      to: new Date(Date.UTC(2026, 8, 1)),
-      direction: "out",
-    });
-
-    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
-    expect(byLabel["Alimentação"]).toBe(45000);
-    expect(byLabel["Transporte"]).toBe(32000);
-    expect(rows).toHaveLength(2);
-  });
-
-  it("sumByDimension with groupBy 'none' returns a single total row", async () => {
-    const { repo, base, userId } = await setup(4009);
-    const d = new Date("2026-08-05");
-    await repo.create({ ...base, description: "a", expectedAmountCents: 1000, accrualDate: d, dueDate: d });
-    await repo.create({ ...base, description: "b", expectedAmountCents: 2500, accrualDate: d, dueDate: d });
-
-    const rows = await repo.sumByDimension({
-      userId,
-      groupBy: "none",
-      from: new Date(Date.UTC(2026, 7, 1)),
-      to: new Date(Date.UTC(2026, 8, 1)),
-      direction: "out",
-    });
-
-    expect(rows).toEqual([{ label: null, amountCents: 3500 }]);
   });
 });

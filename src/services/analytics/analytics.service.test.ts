@@ -1,22 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ITransactionRepository, SpendingQuery, SpendingRow } from "@/types/repository";
+import type { ISpendingRepository, SpendingFilter, SpendingRow } from "@/types/repository";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
 
-function repoReturning(rows: SpendingRow[], capture?: (q: SpendingQuery) => void) {
+function makeRepo(overrides: Partial<ISpendingRepository> = {}): ISpendingRepository {
   return {
-    sumByDimension: vi.fn(async (q: SpendingQuery) => {
-      capture?.(q);
-      return rows;
-    }),
-  } as unknown as ITransactionRepository;
+    sumTotal: vi.fn(async () => 0),
+    sumByCategory: vi.fn(async () => []),
+    sumByMantra: vi.fn(async () => []),
+    sumByCard: vi.fn(async () => []),
+    sumByPaymentMethod: vi.fn(async () => []),
+    ...overrides,
+  };
 }
 
 describe("AnalyticsService.aggregate", () => {
-  it("sorts rows by amount desc and sums the total", async () => {
-    const repo = repoReturning([
-      { label: "Transporte", amountCents: 30000 },
-      { label: "Alimentação", amountCents: 45000 },
-    ]);
+  it("routes group_by to the matching repo method and sorts rows desc with total", async () => {
+    const sumByCategory = vi.fn(
+      async (): Promise<SpendingRow[]> => [
+        { label: "Transporte", amountCents: 30000 },
+        { label: "Alimentação", amountCents: 45000 },
+      ],
+    );
+    const repo = makeRepo({ sumByCategory });
     const service = new AnalyticsService(repo);
 
     const report = await service.aggregate(1, {
@@ -25,6 +30,7 @@ describe("AnalyticsService.aggregate", () => {
       to: "2026-08-31",
     });
 
+    expect(sumByCategory).toHaveBeenCalledOnce();
     expect(report.rows).toEqual([
       { label: "Alimentação", amountCents: 45000 },
       { label: "Transporte", amountCents: 30000 },
@@ -33,9 +39,12 @@ describe("AnalyticsService.aggregate", () => {
   });
 
   it("labels null groups and defaults direction to 'out', end date inclusive", async () => {
-    let captured: SpendingQuery | undefined;
-    const repo = repoReturning([{ label: null, amountCents: 1000 }], (q) => {
-      captured = q;
+    let captured: SpendingFilter | undefined;
+    const repo = makeRepo({
+      sumByCategory: vi.fn(async (f: SpendingFilter) => {
+        captured = f;
+        return [{ label: null, amountCents: 1000 }];
+      }),
     });
     const service = new AnalyticsService(repo);
 
@@ -51,20 +60,29 @@ describe("AnalyticsService.aggregate", () => {
     expect(captured!.to).toEqual(new Date(Date.UTC(2026, 8, 1)));
   });
 
-  it("passes direction 'in' through for income queries", async () => {
-    let captured: SpendingQuery | undefined;
-    const repo = repoReturning([{ label: null, amountCents: 200000 }], (q) => {
-      captured = q;
+  it("uses sumTotal for group_by 'none' and passes direction 'in'", async () => {
+    let captured: SpendingFilter | undefined;
+    const sumTotal = vi.fn(async (f: SpendingFilter) => {
+      captured = f;
+      return 200000;
     });
-    const service = new AnalyticsService(repo);
+    const service = new AnalyticsService(makeRepo({ sumTotal }));
 
-    await service.aggregate(1, {
+    const report = await service.aggregate(1, {
       group_by: "none",
       from: "2026-08-01",
       to: "2026-08-31",
       direction: "in",
     });
 
+    expect(sumTotal).toHaveBeenCalledOnce();
     expect(captured!.direction).toBe("in");
+    expect(report).toEqual({ rows: [{ label: "Total", amountCents: 200000 }], totalCents: 200000 });
+  });
+
+  it("returns an empty report when 'none' total is zero", async () => {
+    const service = new AnalyticsService(makeRepo({ sumTotal: vi.fn(async () => 0) }));
+    const report = await service.aggregate(1, { group_by: "none", from: "2026-08-01", to: "2026-08-31" });
+    expect(report).toEqual({ rows: [], totalCents: 0 });
   });
 });
