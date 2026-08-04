@@ -274,7 +274,8 @@ export class MessageHandler {
 
     if (turn.kind === "draft") {
       const category = resolveCategory(turn.draft.category_name, turn.draft.description, categories);
-      if (!category && categories.length > 0) {
+      const needsCategory = turn.draft.intent !== "record_income";
+      if (needsCategory && !category && categories.length > 0) {
         const question = categoryQuestion(categories);
         const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
         return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);

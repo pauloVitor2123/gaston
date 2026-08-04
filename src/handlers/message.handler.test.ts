@@ -295,6 +295,22 @@ describe("MessageHandler — record flow", () => {
     expect(created.stateJson.kind).toBe("draft");
   });
 
+  it("does not ask for a category on income, even when none resolves", async () => {
+    const income: TransactionDraft = {
+      intent: "record_income",
+      description: "salário",
+      amount_cents: 200000,
+      payment_method: "pix",
+    };
+    const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: income });
+    const reply = await handler.handle(100, "recebi 2000 de salário", "Test User");
+    expect(transactionService.persist).toHaveBeenCalledOnce();
+    expect(reply.toLowerCase()).not.toContain("categoria");
+    const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(persisted.direction).toBe("in");
+    expect(repos.pendingRepo.create).not.toHaveBeenCalled();
+  });
+
   it("does not block on category when the user has no categories yet", async () => {
     const noCategory: TransactionDraft = {
       intent: "record_expense",
