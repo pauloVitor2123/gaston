@@ -10,7 +10,8 @@ import type { Direction, TransactionDraft } from "@/services/collection/draft";
 import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import { settlesOnRecord, type TransactionService, type TransactionInput } from "@/services/transaction/transaction.service";
-import { formatDayMonth, parseUtcDate } from "@/services/dates";
+import { formatDayMonth, parseUtcDate, toIsoDate } from "@/services/dates";
+import type { Clock } from "@/services/clock";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
 import { InstallmentPurchaseNotAllowedError, type InstallmentService } from "@/services/installment/installment.service";
@@ -103,6 +104,7 @@ export class MessageHandler {
     private readonly pendingRepo: IPendingConversationRepository,
     private readonly analyticsService: AnalyticsService,
     private readonly balanceService: BalanceService,
+    private readonly clock: Clock,
   ) {}
 
   async handle(chatId: number, text: string, senderName: string): Promise<string> {
@@ -117,8 +119,9 @@ export class MessageHandler {
 
   private async route(chatId: number, text: string, senderName: string): Promise<string> {
     const user = await this.resolveUser(chatId, senderName);
+    const today = this.clock.today(user.timezone);
     const command = commandOf(text);
-    const pending = await this.pendingRepo.findActiveByUser(user.id);
+    const pending = await this.pendingRepo.findActiveByUser(user.id, this.clock.now());
 
     if (command === "/start") {
       if (pending) await this.pendingRepo.delete(pending.id);
@@ -132,8 +135,8 @@ export class MessageHandler {
     }
     if (command === "/help") return HELP;
     if (command === "/pendentes") return this.listPending(user);
-    if (command === "/status") return this.showStatus(user);
-    if (command === "/saldo") return this.handleSaldo(user, text);
+    if (command === "/status") return this.showStatus(user, today);
+    if (command === "/saldo") return this.handleSaldo(user, text, today);
 
     const state = pending && isPendingState(pending.stateJson) ? pending.stateJson : null;
     let activePending = pending;
@@ -148,7 +151,7 @@ export class MessageHandler {
       activePending = null;
     }
 
-    return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending);
+    return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending, today);
   }
 
   private async listPending(user: User): Promise<string> {
@@ -159,8 +162,7 @@ export class MessageHandler {
     return `📋 Pendentes:\n${lines.join("\n")}`;
   }
 
-  private async showStatus(user: User): Promise<string> {
-    const today = todayInTimeZone(user.timezone);
+  private async showStatus(user: User, today: Date): Promise<string> {
     const [payables, summary] = await Promise.all([
       this.paymentService.listPayables(user.id),
       this.balanceService.summarize(user, today),
@@ -171,7 +173,7 @@ export class MessageHandler {
       return `📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉\n${footer}`;
     }
 
-    const todayMs = parseUtcDate(today).getTime();
+    const todayMs = today.getTime();
     const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
     const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
 
@@ -186,8 +188,7 @@ export class MessageHandler {
     return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}\n${footer}`;
   }
 
-  private async handleSaldo(user: User, text: string): Promise<string> {
-    const today = todayInTimeZone(user.timezone);
+  private async handleSaldo(user: User, text: string, today: Date): Promise<string> {
     const arg = text.trim().split(/\s+/).slice(1).join(" ").trim();
 
     if (arg) {
@@ -195,7 +196,7 @@ export class MessageHandler {
       if (cents === null) {
         return "Não entendi o valor. Use assim: /saldo 5000 (ou /saldo 5.000,50).";
       }
-      const now = new Date();
+      const now = this.clock.now();
       await this.balanceService.setBalance(user.id, cents, now);
       const summary = await this.balanceService.summarize(
         { ...user, balanceCents: cents, balanceSetAt: now },
@@ -239,7 +240,7 @@ export class MessageHandler {
         return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
       }
       if (state.kind === "balance_confirm") {
-        await this.balanceService.setBalance(user.id, state.amountCents, new Date());
+        await this.balanceService.setBalance(user.id, state.amountCents, this.clock.now());
         return balanceSetReply(state.amountCents);
       }
       await this.recurringService.delete(user.id, state.billId);
@@ -255,9 +256,9 @@ export class MessageHandler {
     text: string,
     draft: DraftState | null,
     pending: PendingConversation | null,
+    today: Date,
   ): Promise<string> {
     const sanitized = sanitizeUserMessage(text);
-    const today = todayInTimeZone(user.timezone);
     const [categories, cards, payables, recentPayments, recurringBills] = await Promise.all([
       this.categoryRepo.listByUser(user.id),
       this.cardRepo.listByUser(user.id),
@@ -275,7 +276,7 @@ export class MessageHandler {
     const turn = await this.agent.run(messages, {
       categories: categories.map((c) => c.name),
       cards: cardNames,
-      today,
+      today: toIsoDate(today),
       payables,
       recentPayments,
       recurringBills,
@@ -307,7 +308,7 @@ export class MessageHandler {
     }
     if (turn.kind === "installment") {
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordInstallment(turn.purchase, user);
+      return this.recordInstallment(turn.purchase, user, today);
     }
     if (turn.kind === "query") {
       const report = await this.analyticsService.aggregate(user.id, turn.params);
@@ -326,7 +327,7 @@ export class MessageHandler {
     draft: TransactionDraft,
     user: User,
     rawMessage: string,
-    today: string,
+    today: Date,
     cardNames: string[],
     categoryName: string | undefined,
   ): Promise<string> {
@@ -342,11 +343,12 @@ export class MessageHandler {
       warning = UNKNOWN_CARD_WARNING;
     }
 
+    const accrualDate = draft.date ?? toIsoDate(today);
     const input: TransactionInput = {
       direction,
       description: draft.description,
       amount_cents: draft.amount_cents,
-      date: draft.date ?? today,
+      date: accrualDate,
       due_date: draft.due_date,
       already_paid: draft.already_paid,
       payment_method: paymentMethod,
@@ -355,9 +357,9 @@ export class MessageHandler {
       mantra: applyMantraRules(draft.description),
     };
 
-    await this.transactionService.persist(input, user.id, rawMessage);
-    const dueDate = parseUtcDate(input.due_date ?? input.date ?? today);
-    const pending = paymentMethod !== "card" && !settlesOnRecord(input.already_paid, dueDate);
+    await this.transactionService.persist(input, user.id, rawMessage, today);
+    const dueDate = parseUtcDate(input.due_date ?? accrualDate);
+    const pending = paymentMethod !== "card" && !settlesOnRecord(input.already_paid, dueDate, today);
     return this.formatConfirmation(input, pending) + warning;
   }
 
@@ -419,7 +421,7 @@ export class MessageHandler {
   private async recordRecurring(
     bill: RecordRecurringBillArgs,
     user: User,
-    today: string,
+    today: Date,
   ): Promise<string> {
     const { firstDueDate } = await this.recurringService.create(
       {
@@ -432,7 +434,7 @@ export class MessageHandler {
         mantra: applyMantraRules(bill.description),
       },
       user.id,
-      parseUtcDate(today),
+      today,
     );
     return (
       `🔁 Conta recorrente cadastrada: ${bill.description} — ${formatReais(bill.amount_cents)} ` +
@@ -440,7 +442,11 @@ export class MessageHandler {
     );
   }
 
-  private async recordInstallment(purchase: RecordInstallmentArgs, user: User): Promise<string> {
+  private async recordInstallment(
+    purchase: RecordInstallmentArgs,
+    user: User,
+    today: Date,
+  ): Promise<string> {
     try {
       const result = await this.installmentService.create(
         {
@@ -453,6 +459,7 @@ export class MessageHandler {
           date: purchase.date,
         },
         user.id,
+        today,
       );
       const total = formatReais(purchase.total_amount_cents);
       const each = formatReais(result.installmentCents);
@@ -502,7 +509,7 @@ export class MessageHandler {
       await this.pendingRepo.create({
         userId: user.id,
         stateJson: state as unknown as Record<string, unknown>,
-        expiresAt: new Date(Date.now() + DRAFT_TTL_MS),
+        expiresAt: new Date(this.clock.now().getTime() + DRAFT_TTL_MS),
       });
     }
 
@@ -519,7 +526,7 @@ export class MessageHandler {
     await this.pendingRepo.create({
       userId: user.id,
       stateJson: state as unknown as Record<string, unknown>,
-      expiresAt: new Date(Date.now() + ttlMs),
+      expiresAt: new Date(this.clock.now().getTime() + ttlMs),
     });
   }
 
@@ -608,15 +615,6 @@ function sumPayables(payables: Payable[]): number {
 
 function payableLine(p: Payable): string {
   return `• ${p.description} — ${formatReais(p.amountCents)} (vence ${formatDayMonth(p.dueDate)})`;
-}
-
-function todayInTimeZone(timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
 }
 
 function isPendingState(value: unknown): value is PendingState {

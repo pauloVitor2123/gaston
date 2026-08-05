@@ -51,7 +51,7 @@ describe("PaymentEventRepository", () => {
       paidAt: new Date(),
     });
 
-    await repo.void(event.id);
+    await repo.void(event.id, new Date());
 
     expect(await repo.listByTarget(userId, "invoice", 5)).toHaveLength(0);
     expect(await repo.listRecentByUser(userId, 10)).toHaveLength(0);

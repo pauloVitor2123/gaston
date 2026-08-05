@@ -5,6 +5,7 @@ import type {
   ITransactionRepository,
 } from "@/types/repository";
 import type { PaymentEvent, Transaction } from "@/db/schema";
+import type { Clock } from "@/services/clock";
 import { PaymentError } from "@/services/payment/errors";
 import { materializedBill, nextOccurrence } from "@/services/recurring/recurring";
 
@@ -56,6 +57,7 @@ export class PaymentService {
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
     private readonly paymentEventRepo: IPaymentEventRepository,
     private readonly recurringBillRepo: IRecurringBillRepository,
+    private readonly clock: Clock,
   ) {}
 
   async listPayables(userId: number): Promise<Payable[]> {
@@ -116,7 +118,7 @@ export class PaymentService {
       if (transaction) await this.rollBackRecurringChain(userId, transaction);
     }
 
-    await this.paymentEventRepo.void(event.id);
+    await this.paymentEventRepo.void(event.id, this.clock.now());
 
     if (event.targetType === "transaction") {
       await this.transactionRepo.update(userId, event.targetId, {
@@ -159,7 +161,7 @@ export class PaymentService {
     }
 
     const actual = amountCents ?? transaction.expectedAmountCents;
-    const now = new Date();
+    const now = this.clock.now();
     const event = await this.paymentEventRepo.create({
       userId,
       targetType: "transaction",
@@ -214,7 +216,7 @@ export class PaymentService {
     if (remaining <= 0) throw new PaymentError("Essa fatura já está paga.");
 
     const payAmount = Math.min(amountCents ?? remaining, remaining);
-    const now = new Date();
+    const now = this.clock.now();
     const event = await this.paymentEventRepo.create({
       userId,
       targetType: "invoice",
@@ -253,7 +255,7 @@ export class PaymentService {
     await this.cardInvoiceRepo.update(userId, invoiceId, {
       paidAmountCents: paid,
       status: fullyPaid ? "paid" : "open",
-      paidAt: fullyPaid ? new Date() : null,
+      paidAt: fullyPaid ? this.clock.now() : null,
     });
 
     if (!fullyPaid) {

@@ -18,7 +18,7 @@ describe("PendingConversationRepository", () => {
     const { repo, userId } = await setup(8001);
     await repo.create({ userId, stateJson: { step: 1 }, expiresAt: future() });
 
-    const found = await repo.findActiveByUser(userId);
+    const found = await repo.findActiveByUser(userId, new Date());
     expect(found).not.toBeNull();
     expect((found?.stateJson as { step: number }).step).toBe(1);
   });
@@ -27,7 +27,7 @@ describe("PendingConversationRepository", () => {
     const { repo, userId } = await setup(8002);
     await repo.create({ userId, stateJson: { step: 1 }, expiresAt: past() });
 
-    expect(await repo.findActiveByUser(userId)).toBeNull();
+    expect(await repo.findActiveByUser(userId, new Date())).toBeNull();
   });
 
   it("update changes stateJson", async () => {
@@ -43,6 +43,6 @@ describe("PendingConversationRepository", () => {
     const conv = await repo.create({ userId, stateJson: { step: 1 }, expiresAt: future() });
 
     await repo.delete(conv.id);
-    expect(await repo.findActiveByUser(userId)).toBeNull();
+    expect(await repo.findActiveByUser(userId, new Date())).toBeNull();
   });
 });

@@ -17,6 +17,9 @@ import type { AnalyticsService } from "@/services/analytics/analytics.service";
 import type { BalanceService, BalanceSummary } from "@/services/balance/balance.service";
 import type { Card, Category, PendingConversation, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
+import { FixedClock } from "@/services/clock";
+
+const NOW = new Date("2026-08-05T12:00:00.000Z");
 
 const mockUser: User = {
   id: 1,
@@ -130,6 +133,7 @@ function makeHandler(
   payment: PaymentService = makePaymentService(),
   recurring: RecurringBillService = makeRecurringService(),
   installment: InstallmentService = makeInstallmentService(),
+  clock: FixedClock = new FixedClock(NOW),
 ) {
   const repos = makeRepos(repoOverrides);
   const agent = { run: vi.fn().mockResolvedValue(turn) } as unknown as CollectionAgent;
@@ -156,6 +160,7 @@ function makeHandler(
     repos.pendingRepo,
     analytics,
     balance,
+    clock,
   );
   return { handler, repos, agent, transactionService, payment, recurring, installment, analytics, balance };
 }
@@ -205,7 +210,7 @@ describe("MessageHandler — record flow", () => {
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("draft");
     expect(created.stateJson.cycles).toBe(1);
-    expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
+    expect(created.expiresAt.getTime() - NOW.getTime()).toBe(24 * 60 * 60 * 1000);
     expect(reply).toBe("Qual o valor?");
   });
 
@@ -772,6 +777,7 @@ describe("MessageHandler — commands & robustness", () => {
       repos.pendingRepo,
       analytics,
       balance,
+      new FixedClock(NOW),
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");
     expect(reply).toContain("problema");
@@ -784,5 +790,31 @@ describe("MessageHandler — commands & robustness", () => {
     await handler.handle(100, "almoço 35 no nubank", "Test User");
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("uses the user's civil date near midnight, not the UTC date (BUG-3 regression)", async () => {
+    const lateNight = new FixedClock(new Date("2026-08-06T02:30:00.000Z"));
+    const dueTomorrow: TransactionDraft = {
+      intent: "record_expense",
+      description: "boleto",
+      amount_cents: 10000,
+      payment_method: "cash",
+      category_name: "Alimentação",
+      due_date: "2026-08-06",
+    };
+    const { handler, transactionService } = makeHandler(
+      { kind: "draft", draft: dueTomorrow },
+      {},
+      makePaymentService(),
+      makeRecurringService(),
+      makeInstallmentService(),
+      lateNight,
+    );
+
+    const reply = await handler.handle(100, "boleto 100 vence amanhã", "Test User");
+
+    expect(reply).toContain("pendente");
+    const [, , , today] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(today).toEqual(new Date(Date.UTC(2026, 7, 5)));
   });
 });

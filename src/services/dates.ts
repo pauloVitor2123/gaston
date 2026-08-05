@@ -7,8 +7,21 @@ export function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
-export function todayUtcMidnight(): Date {
-  return startOfUtcDay(new Date());
+export function toIsoDate(date: Date): string {
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function civilDateInTimeZone(instant: Date, timeZone: string): Date {
+  const iso = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+  return parseUtcDate(iso);
 }
 
 export function utcDayClamped(year: number, monthIndex: number, day: number): Date {

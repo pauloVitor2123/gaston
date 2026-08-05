@@ -7,8 +7,9 @@ import type {
 } from "@/types/repository";
 import type { Direction, Mantra, PaymentMethod } from "@/services/collection/draft";
 import type { Transaction } from "@/db/schema";
+import type { Clock } from "@/services/clock";
 import { invoiceFor } from "@/services/invoice/invoice";
-import { parseUtcDate, todayUtcMidnight } from "@/services/dates";
+import { parseUtcDate } from "@/services/dates";
 
 export interface TransactionInput {
   direction: Direction;
@@ -23,13 +24,17 @@ export interface TransactionInput {
   mantra?: Mantra;
 }
 
-function toAccrualDate(date?: string): Date {
-  return date ? parseUtcDate(date) : todayUtcMidnight();
+function toAccrualDate(date: string | undefined, today: Date): Date {
+  return date ? parseUtcDate(date) : today;
 }
 
-export function settlesOnRecord(alreadyPaid: boolean | undefined, dueDate: Date): boolean {
+export function settlesOnRecord(
+  alreadyPaid: boolean | undefined,
+  dueDate: Date,
+  today: Date,
+): boolean {
   if (alreadyPaid !== undefined) return alreadyPaid;
-  return dueDate.getTime() <= todayUtcMidnight().getTime();
+  return dueDate.getTime() <= today.getTime();
 }
 
 export class TransactionService {
@@ -39,10 +44,16 @@ export class TransactionService {
     private readonly mantraRepo: IMantraRepository,
     private readonly transactionRepo: ITransactionRepository,
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
+    private readonly clock: Clock,
   ) {}
 
-  async persist(input: TransactionInput, userId: number, rawMessage: string): Promise<Transaction> {
-    const accrualDate = toAccrualDate(input.date);
+  async persist(
+    input: TransactionInput,
+    userId: number,
+    rawMessage: string,
+    today: Date,
+  ): Promise<Transaction> {
+    const accrualDate = toAccrualDate(input.date, today);
 
     const [category, card, mantra] = await Promise.all([
       input.category_name
@@ -73,9 +84,9 @@ export class TransactionService {
       );
       cardInvoiceId = invoice.id;
       dueDate = period.due_date;
-    } else if (settlesOnRecord(input.already_paid, dueDate)) {
+    } else if (settlesOnRecord(input.already_paid, dueDate, today)) {
       status = "settled";
-      settledAt = new Date();
+      settledAt = this.clock.now();
       actualAmountCents = input.amount_cents;
     }
 

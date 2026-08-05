@@ -10,7 +10,7 @@ import type { Mantra } from "@/services/collection/draft";
 import type { InstallmentPurchase } from "@/db/schema";
 import { invoiceFor } from "@/services/invoice/invoice";
 import { splitAmountCents } from "@/services/installment/installments";
-import { addMonthsUtc, parseUtcDate, todayUtcMidnight } from "@/services/dates";
+import { addMonthsUtc, parseUtcDate } from "@/services/dates";
 
 export interface InstallmentInput {
   description: string;
@@ -40,8 +40,8 @@ export class InstallmentService {
     private readonly cardInvoiceRepo: ICardInvoiceRepository,
   ) {}
 
-  async create(input: InstallmentInput, userId: number): Promise<InstallmentResult> {
-    const purchaseDate = input.date ? parseUtcDate(input.date) : todayUtcMidnight();
+  async create(input: InstallmentInput, userId: number, today: Date): Promise<InstallmentResult> {
+    const purchaseDate = input.date ? parseUtcDate(input.date) : today;
     const [category, card, mantra] = await Promise.all([
       input.category_name
         ? this.categoryRepo.findByNameOrSynonym(userId, input.category_name)

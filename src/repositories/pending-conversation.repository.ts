@@ -6,14 +6,14 @@ import type { IPendingConversationRepository } from "@/types/repository";
 export class PendingConversationRepository implements IPendingConversationRepository {
   constructor(private readonly db: DrizzleD1Database) {}
 
-  async findActiveByUser(userId: number): Promise<PendingConversation | null> {
+  async findActiveByUser(userId: number, now: Date): Promise<PendingConversation | null> {
     const [row] = await this.db
       .select()
       .from(pendingConversations)
       .where(
         and(
           eq(pendingConversations.userId, userId),
-          gt(pendingConversations.expiresAt, new Date()),
+          gt(pendingConversations.expiresAt, now),
         ),
       )
       .limit(1);

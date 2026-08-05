@@ -40,7 +40,7 @@ describe("BalanceService.summarize", () => {
     const { service } = makeService({
       settled: (dir) => (dir === "in" ? 300000 : 120000),
     });
-    const summary = await service.summarize(user, "2026-08-15");
+    const summary = await service.summarize(user, new Date(Date.UTC(2026, 7, 15)));
     expect(summary.onHand).toBe(500000 + 300000 - 120000);
   });
 
@@ -54,7 +54,7 @@ describe("BalanceService.summarize", () => {
       pendingIn: 200000,
       payables,
     });
-    const summary = await service.summarize(user, "2026-08-15");
+    const summary = await service.summarize(user, new Date(Date.UTC(2026, 7, 15)));
     expect(summary.toPay).toBe(312035);
     expect(summary.toReceive).toBe(200000);
     expect(summary.projected).toBe(500000 + 200000 - 312035);
@@ -62,7 +62,7 @@ describe("BalanceService.summarize", () => {
 
   it("queries realized sums since the user's balanceSetAt and receivables until month end", async () => {
     const { service, balanceRepo } = makeService({});
-    await service.summarize(user, "2026-08-15");
+    await service.summarize(user, new Date(Date.UTC(2026, 7, 15)));
     expect(balanceRepo.sumSettledSince).toHaveBeenCalledWith(1, "in", user.balanceSetAt);
     expect(balanceRepo.sumSettledSince).toHaveBeenCalledWith(1, "out", user.balanceSetAt);
     expect(balanceRepo.sumPendingUntil).toHaveBeenCalledWith(1, "in", new Date(Date.UTC(2026, 8, 1)));

@@ -15,6 +15,7 @@ import {
 import type { Card, CardInvoice, Category, InstallmentPurchase, Mantra } from "@/db/schema";
 
 const userId = 1;
+const TODAY = new Date(Date.UTC(2026, 0, 15));
 const mockCategory = { id: 10, userId, name: "Casa", synonyms: [] } as Category;
 const mockMantra = { id: 30, userId, name: "Pagas as Contas", targetPercent: 0.45 } as Mantra;
 const mockCard = {
@@ -84,7 +85,7 @@ const input: InstallmentInput = {
 describe("InstallmentService.create", () => {
   it("creates the parent purchase with card and total", async () => {
     const { service, repos } = makeService();
-    await service.create(input, userId);
+    await service.create(input, userId, TODAY);
 
     const parent = (repos.installmentRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(parent).toMatchObject({
@@ -99,7 +100,7 @@ describe("InstallmentService.create", () => {
 
   it("generates N child transactions across consecutive invoices", async () => {
     const { service, repos } = makeService();
-    await service.create(input, userId);
+    await service.create(input, userId, TODAY);
 
     const calls = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls).toHaveLength(5);
@@ -118,13 +119,13 @@ describe("InstallmentService.create", () => {
 
   it("reports the installment value and the first due date", async () => {
     const { service } = makeService();
-    const result = await service.create(input, userId);
+    const result = await service.create(input, userId, TODAY);
     expect(result.installmentCents).toBe(73360);
     expect(result.firstDueDate).toEqual(new Date(Date.UTC(2026, 2, 20)));
   });
 
   it("refuses when the card is not registered", async () => {
     const { service } = makeService(null);
-    await expect(service.create(input, userId)).rejects.toBeInstanceOf(InstallmentPurchaseNotAllowedError);
+    await expect(service.create(input, userId, TODAY)).rejects.toBeInstanceOf(InstallmentPurchaseNotAllowedError);
   });
 });
