@@ -196,12 +196,12 @@ export class MessageHandler {
         return "Não entendi o valor. Use assim: /saldo 5000 (ou /saldo 5.000,50).";
       }
       const now = new Date();
-      await this.userRepo.setBalance(user.id, cents, now);
+      await this.balanceService.setBalance(user.id, cents, now);
       const summary = await this.balanceService.summarize(
         { ...user, balanceCents: cents, balanceSetAt: now },
         today,
       );
-      return `✅ Saldo definido: ${formatReais(cents)}.\n\n${formatBalance(summary)}`;
+      return `${balanceSetReply(cents)}\n\n${formatBalance(summary)}`;
     }
 
     return formatBalance(await this.balanceService.summarize(user, today));
@@ -239,8 +239,8 @@ export class MessageHandler {
         return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
       }
       if (state.kind === "balance_confirm") {
-        await this.userRepo.setBalance(user.id, state.amountCents, new Date());
-        return `✅ Saldo definido: ${formatReais(state.amountCents)}.`;
+        await this.balanceService.setBalance(user.id, state.amountCents, new Date());
+        return balanceSetReply(state.amountCents);
       }
       await this.recurringService.delete(user.id, state.billId);
       return `🗑️ Cancelei a conta recorrente: ${state.description}`;
@@ -536,6 +536,10 @@ export class MessageHandler {
     }
     return `✅ ${parts}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function balanceSetReply(cents: number): string {
+  return `✅ Saldo definido: ${formatReais(cents)}.`;
 }
 
 function balanceFooter(summary: BalanceSummary): string {

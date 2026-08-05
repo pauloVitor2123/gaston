@@ -141,6 +141,7 @@ function makeHandler(
   } as unknown as AnalyticsService;
   const balance = {
     summarize: vi.fn().mockResolvedValue(zeroSummary),
+    setBalance: vi.fn().mockResolvedValue(undefined),
   } as unknown as BalanceService;
 
   const handler = new MessageHandler(
@@ -387,9 +388,9 @@ describe("MessageHandler — query flow", () => {
 
 describe("MessageHandler — set balance (NL) flow", () => {
   it("asks for confirmation on a set_balance turn without writing yet", async () => {
-    const { handler, repos } = makeHandler({ kind: "set_balance", amountCents: 500000 });
+    const { handler, repos, balance } = makeHandler({ kind: "set_balance", amountCents: 500000 });
     const reply = await handler.handle(100, "tenho 5000 na conta", "Test User");
-    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(balance.setBalance).not.toHaveBeenCalled();
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("balance_confirm");
     expect(created.stateJson.amountCents).toBe(500000);
@@ -397,7 +398,7 @@ describe("MessageHandler — set balance (NL) flow", () => {
   });
 
   it("writes the balance on 'sim' and does not call the agent", async () => {
-    const { handler, agent, repos } = makeHandler(
+    const { handler, agent, balance } = makeHandler(
       { kind: "question", text: "x" },
       {
         findActiveByUser: () =>
@@ -406,12 +407,12 @@ describe("MessageHandler — set balance (NL) flow", () => {
     );
     const reply = await handler.handle(100, "sim", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
-    expect(repos.userRepo.setBalance).toHaveBeenCalledWith(1, 500000, expect.any(Date));
+    expect(balance.setBalance).toHaveBeenCalledWith(1, 500000, expect.any(Date));
     expect(reply).toContain("Saldo definido: R$ 5000,00");
   });
 
   it("does not write the balance on 'não'", async () => {
-    const { handler, repos } = makeHandler(
+    const { handler, balance } = makeHandler(
       { kind: "question", text: "x" },
       {
         findActiveByUser: () =>
@@ -419,7 +420,7 @@ describe("MessageHandler — set balance (NL) flow", () => {
       },
     );
     const reply = await handler.handle(100, "não", "Test User");
-    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(balance.setBalance).not.toHaveBeenCalled();
     expect(reply.toLowerCase()).toContain("deixei como estava");
   });
 });
@@ -623,27 +624,27 @@ describe("MessageHandler — saldo flow", () => {
   };
 
   it("shows the balancete on /saldo without an argument, without setting", async () => {
-    const { handler, repos, balance } = makeHandler();
+    const { handler, balance } = makeHandler();
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     const reply = await handler.handle(100, "/saldo", "Test User");
-    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(balance.setBalance).not.toHaveBeenCalled();
     expect(reply).toContain("Na conta hoje: R$ 6800,00");
     expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
     expect(reply).toContain("A pagar no mês: R$ 3120,35");
   });
 
   it("sets the balance on /saldo <valor> and confirms", async () => {
-    const { handler, repos, balance } = makeHandler();
+    const { handler, balance } = makeHandler();
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     const reply = await handler.handle(100, "/saldo 5.000,50", "Test User");
-    expect(repos.userRepo.setBalance).toHaveBeenCalledWith(1, 500050, expect.any(Date));
+    expect(balance.setBalance).toHaveBeenCalledWith(1, 500050, expect.any(Date));
     expect(reply).toContain("Saldo definido: R$ 5000,50");
   });
 
   it("rejects an unparseable amount without setting", async () => {
-    const { handler, repos } = makeHandler();
+    const { handler, balance } = makeHandler();
     const reply = await handler.handle(100, "/saldo abc", "Test User");
-    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(balance.setBalance).not.toHaveBeenCalled();
     expect(reply.toLowerCase()).toContain("não entendi");
   });
 
@@ -755,7 +756,10 @@ describe("MessageHandler — commands & robustness", () => {
     const agent = { run: vi.fn().mockRejectedValue(new Error("LLM down")) } as unknown as CollectionAgent;
     const transactionService = { persist: vi.fn() } as unknown as TransactionService;
     const analytics = { aggregate: vi.fn() } as unknown as AnalyticsService;
-    const balance = { summarize: vi.fn().mockResolvedValue(zeroSummary) } as unknown as BalanceService;
+    const balance = {
+      summarize: vi.fn().mockResolvedValue(zeroSummary),
+      setBalance: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BalanceService;
     const handler = new MessageHandler(
       repos.userRepo,
       repos.categoryRepo,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { IBalanceRepository, IPayableLister } from "@/types/repository";
+import type { IBalanceRepository, IPayableLister, IUserRepository } from "@/types/repository";
 import type { Payable } from "@/services/payment/payment.service";
 import type { User } from "@/db/schema";
 import { BalanceService } from "@/services/balance/balance.service";
@@ -22,8 +22,18 @@ function makeService(opts: {
   const payables = {
     listPayables: vi.fn(async () => opts.payables ?? []),
   } as unknown as IPayableLister;
-  return { service: new BalanceService(balanceRepo, payables), balanceRepo, payables };
+  const userRepo = { setBalance: vi.fn() } as unknown as IUserRepository;
+  return { service: new BalanceService(balanceRepo, payables, userRepo), balanceRepo, payables, userRepo };
 }
+
+describe("BalanceService.setBalance", () => {
+  it("delegates to the user repository", async () => {
+    const { service, userRepo } = makeService({});
+    const at = new Date("2026-08-05");
+    await service.setBalance(1, 500000, at);
+    expect(userRepo.setBalance).toHaveBeenCalledWith(1, 500000, at);
+  });
+});
 
 describe("BalanceService.summarize", () => {
   it("computes on-hand as base + realized income - realized spend since balanceSetAt", async () => {
