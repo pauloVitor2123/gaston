@@ -25,6 +25,7 @@ import {
   querySpendingArgsSchema,
   type QuerySpendingArgs,
 } from "@/services/analytics/query";
+import { SET_BALANCE_TOOL, setBalanceArgsSchema } from "@/services/balance/tools";
 
 export type AgentTurn =
   | { kind: "draft"; draft: TransactionDraft }
@@ -34,6 +35,7 @@ export type AgentTurn =
   | { kind: "delete_recurring"; billId: number }
   | { kind: "installment"; purchase: RecordInstallmentArgs }
   | { kind: "query"; params: QuerySpendingArgs }
+  | { kind: "set_balance"; amountCents: number }
   | { kind: "question"; text: string };
 
 const TOOLS = [
@@ -44,6 +46,7 @@ const TOOLS = [
   DELETE_RECURRING_BILL_TOOL,
   RECORD_INSTALLMENT_TOOL,
   QUERY_SPENDING_TOOL,
+  SET_BALANCE_TOOL,
 ];
 const FALLBACK_QUESTION = "Me conta o valor e o que foi, por favor.";
 
@@ -93,6 +96,11 @@ export class CollectionAgent {
     if (toolCall?.name === QUERY_SPENDING_TOOL.name) {
       const parsed = querySpendingArgsSchema.safeParse(toolCall.arguments);
       if (parsed.success) return { kind: "query", params: parsed.data };
+    }
+
+    if (toolCall?.name === SET_BALANCE_TOOL.name) {
+      const parsed = setBalanceArgsSchema.safeParse(toolCall.arguments);
+      if (parsed.success) return { kind: "set_balance", amountCents: parsed.data.amount_cents };
     }
 
     return { kind: "question", text: content?.trim() || FALLBACK_QUESTION };

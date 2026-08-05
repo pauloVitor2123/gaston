@@ -385,6 +385,45 @@ describe("MessageHandler — query flow", () => {
   });
 });
 
+describe("MessageHandler — set balance (NL) flow", () => {
+  it("asks for confirmation on a set_balance turn without writing yet", async () => {
+    const { handler, repos } = makeHandler({ kind: "set_balance", amountCents: 500000 });
+    const reply = await handler.handle(100, "tenho 5000 na conta", "Test User");
+    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.stateJson.kind).toBe("balance_confirm");
+    expect(created.stateJson.amountCents).toBe(500000);
+    expect(reply).toContain("Definir saldo como R$ 5000,00");
+  });
+
+  it("writes the balance on 'sim' and does not call the agent", async () => {
+    const { handler, agent, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "balance_confirm", amountCents: 500000 })),
+      },
+    );
+    const reply = await handler.handle(100, "sim", "Test User");
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(repos.userRepo.setBalance).toHaveBeenCalledWith(1, 500000, expect.any(Date));
+    expect(reply).toContain("Saldo definido: R$ 5000,00");
+  });
+
+  it("does not write the balance on 'não'", async () => {
+    const { handler, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "balance_confirm", amountCents: 500000 })),
+      },
+    );
+    const reply = await handler.handle(100, "não", "Test User");
+    expect(repos.userRepo.setBalance).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("deixei como estava");
+  });
+});
+
 describe("MessageHandler — payment flow", () => {
   it("asks for confirmation on a pay turn without mutating yet", async () => {
     const { handler, repos, payment } = makeHandler({
