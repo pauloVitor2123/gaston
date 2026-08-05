@@ -39,6 +39,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
 
   const llm = buildProvider(llmConfigs.primary, llmConfigs.fallback);
 
+  const userRepo = new UserRepository(db);
   const categoryRepo = new CategoryRepository(db);
   const cardRepo = new CardRepository(db);
   const mantraRepo = new MantraRepository(db);
@@ -75,10 +76,10 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     cardInvoiceRepo,
   );
   const analyticsService = new AnalyticsService(new SpendingRepository(db));
-  const balanceService = new BalanceService(new BalanceRepository(db), paymentService);
+  const balanceService = new BalanceService(new BalanceRepository(db), paymentService, userRepo);
 
   return new MessageHandler(
-    new UserRepository(db),
+    userRepo,
     categoryRepo,
     cardRepo,
     agent,

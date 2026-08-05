@@ -92,6 +92,16 @@ describe("CollectionAgent.run", () => {
     });
   });
 
+  it("returns a set_balance turn when the model calls set_balance", async () => {
+    const { agent } = agentReturning({
+      toolCall: { name: "set_balance", arguments: { amount_cents: 500000 } },
+    });
+
+    const turn = await agent.run([{ role: "user", content: "tenho 5000 na conta" }], context);
+
+    expect(turn).toEqual({ kind: "set_balance", amountCents: 500000 });
+  });
+
   it("passes the system prompt and tool definition to the client", async () => {
     const { agent, llm } = agentReturning({ content: "?" });
 

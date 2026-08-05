@@ -37,7 +37,12 @@ type DeleteRecurringConfirmState = {
   billId: number;
   description: string;
 };
-type ConfirmState = PaymentConfirmState | UndoConfirmState | DeleteRecurringConfirmState;
+type BalanceConfirmState = { kind: "balance_confirm"; amountCents: number };
+type ConfirmState =
+  | PaymentConfirmState
+  | UndoConfirmState
+  | DeleteRecurringConfirmState
+  | BalanceConfirmState;
 type PendingState = DraftState | ConfirmState;
 
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -191,12 +196,12 @@ export class MessageHandler {
         return "Não entendi o valor. Use assim: /saldo 5000 (ou /saldo 5.000,50).";
       }
       const now = new Date();
-      await this.userRepo.setBalance(user.id, cents, now);
+      await this.balanceService.setBalance(user.id, cents, now);
       const summary = await this.balanceService.summarize(
         { ...user, balanceCents: cents, balanceSetAt: now },
         today,
       );
-      return `✅ Saldo definido: ${formatReais(cents)}.\n\n${formatBalance(summary)}`;
+      return `${balanceSetReply(cents)}\n\n${formatBalance(summary)}`;
     }
 
     return formatBalance(await this.balanceService.summarize(user, today));
@@ -232,6 +237,10 @@ export class MessageHandler {
       if (state.kind === "undo_confirm") {
         const undone = await this.paymentService.undo(user.id, state.eventId);
         return `↩️ Estornei: ${undone.description} — ${formatReais(undone.amountCents)}`;
+      }
+      if (state.kind === "balance_confirm") {
+        await this.balanceService.setBalance(user.id, state.amountCents, new Date());
+        return balanceSetReply(state.amountCents);
       }
       await this.recurringService.delete(user.id, state.billId);
       return `🗑️ Cancelei a conta recorrente: ${state.description}`;
@@ -304,6 +313,9 @@ export class MessageHandler {
       const report = await this.analyticsService.aggregate(user.id, turn.params);
       return formatSpendingReport(turn.params, report);
     }
+    if (turn.kind === "set_balance") {
+      return this.startBalanceConfirm(user, pending, turn.amountCents);
+    }
 
     const thread: LLMMessage[] = [...messages, { role: "assistant", content: turn.text }];
     const cycles = (draft?.cycles ?? 0) + 1;
@@ -371,6 +383,16 @@ export class MessageHandler {
     };
     await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
     return `Confirma pagar ${payable.description} — ${formatReais(amount)}? (sim/não)`;
+  }
+
+  private async startBalanceConfirm(
+    user: User,
+    pending: PendingConversation | null,
+    amountCents: number,
+  ): Promise<string> {
+    const state: BalanceConfirmState = { kind: "balance_confirm", amountCents };
+    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return `Definir saldo como ${formatReais(amountCents)}? (sim/não)`;
   }
 
   private async startUndoConfirm(
@@ -516,6 +538,10 @@ export class MessageHandler {
   }
 }
 
+function balanceSetReply(cents: number): string {
+  return `✅ Saldo definido: ${formatReais(cents)}.`;
+}
+
 function balanceFooter(summary: BalanceSummary): string {
   return `💰 Na conta hoje: ${formatReais(summary.onHand)} · 📈 Projeção fim do mês: ${formatReais(summary.projected)}`;
 }
@@ -607,6 +633,9 @@ function isPendingState(value: unknown): value is PendingState {
   }
   if (state.kind === "delete_recurring_confirm") {
     return typeof state.billId === "number" && typeof state.description === "string";
+  }
+  if (state.kind === "balance_confirm") {
+    return typeof state.amountCents === "number";
   }
   return false;
 }
