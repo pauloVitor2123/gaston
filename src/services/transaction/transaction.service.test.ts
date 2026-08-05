@@ -84,6 +84,7 @@ function makeRepos(
     } as unknown as ITransactionRepository,
     cardInvoiceRepo: {
       findOrCreate: vi.fn().mockImplementation(overrides.findOrCreate ?? (() => Promise.resolve(mockInvoice))),
+      update: vi.fn().mockResolvedValue(undefined),
       listOpen: vi.fn(),
     } as unknown as ICardInvoiceRepository,
   };
@@ -121,6 +122,18 @@ describe("TransactionService.persist", () => {
     expect(created.cardInvoiceId).toBe(40);
     // purchase Jan 15 > closingDay 13 → due date is month+2, day 20 = Mar 20
     expect(created.dueDate).toEqual(new Date("2025-03-20"));
+  });
+
+  it("reopens a paid invoice when a backdated card charge lands in its cycle (BUG-2)", async () => {
+    const { service, repos } = makeService({
+      findOrCreate: () => Promise.resolve({ ...mockInvoice, status: "paid", paidAt: new Date() }),
+    });
+    await service.persist(baseResult, userId, "raw", TODAY);
+
+    expect(repos.cardInvoiceRepo.update).toHaveBeenCalledWith(userId, 40, { status: "open", paidAt: null });
+    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(created.cardInvoiceId).toBe(40);
+    expect(created.status).toBe("pending");
   });
 
   it("skips card invoice for non-card payment", async () => {

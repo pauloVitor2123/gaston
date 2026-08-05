@@ -8,7 +8,7 @@ import type {
 import type { Direction, Mantra, PaymentMethod } from "@/services/collection/draft";
 import type { Transaction } from "@/db/schema";
 import type { Clock } from "@/services/clock";
-import { invoiceFor } from "@/services/invoice/invoice";
+import { findOrOpenInvoice, invoiceFor } from "@/services/invoice/invoice";
 import { parseUtcDate } from "@/services/dates";
 
 export interface TransactionInput {
@@ -75,13 +75,7 @@ export class TransactionService {
 
     if (input.payment_method === "card" && card) {
       const period = invoiceFor(accrualDate, card);
-      const invoice = await this.cardInvoiceRepo.findOrCreate(
-        userId,
-        card.id,
-        period.cycle_start,
-        period.cycle_end,
-        period.due_date,
-      );
+      const invoice = await findOrOpenInvoice(this.cardInvoiceRepo, userId, card.id, period);
       cardInvoiceId = invoice.id;
       dueDate = period.due_date;
     } else if (settlesOnRecord(input.already_paid, dueDate, today)) {

@@ -3,6 +3,16 @@
 Glossário do domínio. Nomes aqui são os nomes que o código deve usar (em inglês no código,
 descritos em português). Seed inicial — cresce conforme os módulos ganham nome.
 
+## Fatura (Card Invoice)
+
+- **Invoice reopen (reabertura de fatura)** — invariante do domínio: **uma fatura com filho
+  não pago está `open`**. Quando uma cobrança chega num ciclo cuja fatura já foi quitada
+  (compra retroativa), a fatura reabre (`paid → open`, `paidAt → null`, preservando
+  `paidAmountCents`) para a nova dívida reaparecer em `/pendentes`. Encapsulado em
+  `findOrOpenInvoice` (`src/services/invoice/invoice.ts`), usado por todo ponto que anexa um
+  filho a uma fatura. É o mesmo padrão que `PaymentService.recomputeInvoice` aplica ao desfazer
+  um pagamento. Ver `docs/invoice-late-charge.md`.
+
 ## Tempo
 
 - **Clock** — o seam (interface) que é a única fonte de tempo do sistema. Expõe `now(): Date`

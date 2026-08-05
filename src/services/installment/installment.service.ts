@@ -8,7 +8,7 @@ import type {
 } from "@/types/repository";
 import type { Mantra } from "@/services/collection/draft";
 import type { InstallmentPurchase } from "@/db/schema";
-import { invoiceFor } from "@/services/invoice/invoice";
+import { findOrOpenInvoice, invoiceFor } from "@/services/invoice/invoice";
 import { splitAmountCents } from "@/services/installment/installments";
 import { addMonthsUtc, parseUtcDate } from "@/services/dates";
 
@@ -69,13 +69,7 @@ export class InstallmentService {
     let firstDueDate = purchaseDate;
     for (let i = 0; i < input.installments_count; i++) {
       const period = invoiceFor(addMonthsUtc(purchaseDate, i), card);
-      const invoice = await this.cardInvoiceRepo.findOrCreate(
-        userId,
-        card.id,
-        period.cycle_start,
-        period.cycle_end,
-        period.due_date,
-      );
+      const invoice = await findOrOpenInvoice(this.cardInvoiceRepo, userId, card.id, period);
       await this.transactionRepo.create({
         userId,
         direction: "out",

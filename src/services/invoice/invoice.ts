@@ -1,11 +1,34 @@
 import type { Card } from "@/db/schema/cards";
+import type { CardInvoice } from "@/db/schema";
+import type { ICardInvoiceRepository } from "@/types/repository";
 
 type CardCycle = Pick<Card, "closingDay" | "dueDay">;
+
+type InvoiceAttachRepository = Pick<ICardInvoiceRepository, "findOrCreate" | "update">;
 
 export interface InvoicePeriod {
   cycle_start: Date;
   cycle_end: Date;
   due_date: Date;
+}
+
+export async function findOrOpenInvoice(
+  repo: InvoiceAttachRepository,
+  userId: number,
+  cardId: number,
+  period: InvoicePeriod,
+): Promise<CardInvoice> {
+  const invoice = await repo.findOrCreate(
+    userId,
+    cardId,
+    period.cycle_start,
+    period.cycle_end,
+    period.due_date,
+  );
+  if (invoice.status === "open") return invoice;
+
+  await repo.update(userId, invoice.id, { status: "open", paidAt: null });
+  return { ...invoice, status: "open", paidAt: null };
 }
 
 export function invoiceFor(purchaseDate: Date, card: CardCycle): InvoicePeriod {
