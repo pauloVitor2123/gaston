@@ -27,9 +27,11 @@ export class BalanceService {
     await this.userRepo.setBalance(userId, amountCents, at);
   }
 
-  async summarize(user: User, today: Date): Promise<BalanceSummary> {
+  async summarize(user: User, today: Date): Promise<BalanceSummary | null> {
+    if (user.balanceSetAt === null) return null;
+
     const monthEnd = firstOfNextMonth(today);
-    const since = user.balanceSetAt ?? new Date(0);
+    const since = user.balanceSetAt;
     const [receivedSince, spentSince, toReceive, payables] = await Promise.all([
       this.balanceRepo.sumSettledSince(user.id, "in", since),
       this.balanceRepo.sumSettledSince(user.id, "out", since),

@@ -13,6 +13,16 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   filho a uma fatura. É o mesmo padrão que `PaymentService.recomputeInvoice` aplica ao desfazer
   um pagamento. Ver `docs/invoice-late-charge.md`.
 
+## Saldo (Balance)
+
+- **Baseline âncora** — o saldo só faz sentido a partir de um instante explícito em que o
+  usuário afirmou "tenho tanto agora" (`balanceSetAt`). `onHand` e a projeção do mês são
+  calculados **desde** essa âncora (`base + recebido − gasto desde então`). Sem âncora não há
+  baseline: `balanceSetAt === null` é o estado **"saldo nunca definido"** (distinto de saldo
+  zerado). Nele `BalanceService.summarize` retorna `null` — não existe `new Date(0)` como
+  sentinela de "desde a época" (isso somava o histórico inteiro contra uma base fictícia de R$ 0).
+  Os handlers tratam o `null`: `/saldo` pede para definir; o rodapé do `/status` vira uma dica.
+
 ## Tempo
 
 - **Clock** — o seam (interface) que é a única fonte de tempo do sistema. Expõe `now(): Date`

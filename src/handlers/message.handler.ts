@@ -79,6 +79,11 @@ const HELP =
 
 const NO_PENDING = "Você não tem nada em aberto. 🎉";
 
+const BALANCE_NOT_SET =
+  "💡 Você ainda não definiu seu saldo.\n\n" +
+  "Defina com: /saldo 5000 (ou /saldo 5.000,50)\n\n" +
+  "Assim eu calculo quanto você tem hoje e a projeção do fim do mês.";
+
 const INSTALLMENT_NO_CARD =
   "Pra registrar uma compra parcelada preciso saber o cartão. Cadastre-o com /cartao e tente de novo.";
 
@@ -202,10 +207,13 @@ export class MessageHandler {
         { ...user, balanceCents: cents, balanceSetAt: now },
         today,
       );
-      return `${balanceSetReply(cents)}\n\n${formatBalance(summary)}`;
+      const detail = summary === null ? "" : `\n\n${formatBalance(summary)}`;
+      return `${balanceSetReply(cents)}${detail}`;
     }
 
-    return formatBalance(await this.balanceService.summarize(user, today));
+    const summary = await this.balanceService.summarize(user, today);
+    if (summary === null) return BALANCE_NOT_SET;
+    return formatBalance(summary);
   }
 
   private async resolveUser(chatId: number, name: string): Promise<User> {
@@ -549,7 +557,8 @@ function balanceSetReply(cents: number): string {
   return `✅ Saldo definido: ${formatReais(cents)}.`;
 }
 
-function balanceFooter(summary: BalanceSummary): string {
+function balanceFooter(summary: BalanceSummary | null): string {
+  if (summary === null) return "💡 Defina seu saldo com /saldo <valor> para ver a projeção do mês.";
   return `💰 Na conta hoje: ${formatReais(summary.onHand)} · 📈 Projeção fim do mês: ${formatReais(summary.projected)}`;
 }
 

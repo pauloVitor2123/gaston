@@ -660,6 +660,25 @@ describe("MessageHandler — saldo flow", () => {
     expect(reply).toContain("Na conta hoje: R$ 6800,00");
     expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
   });
+
+  it("prompts to set the balance on /saldo when it was never defined (BUG-4)", async () => {
+    const { handler, balance } = makeHandler();
+    (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const reply = await handler.handle(100, "/saldo", "Test User");
+    expect(balance.setBalance).not.toHaveBeenCalled();
+    expect(reply).toContain("ainda não definiu seu saldo");
+    expect(reply).toContain("/saldo 5000");
+    expect(reply).not.toContain("Na conta hoje");
+  });
+
+  it("hints to set the balance in the /status footer when it was never defined (BUG-4)", async () => {
+    const { handler, balance } = makeHandler();
+    (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const reply = await handler.handle(100, "/status", "Test User");
+    expect(reply).toContain("Situação do mês");
+    expect(reply).not.toContain("Na conta hoje");
+    expect(reply).toContain("/saldo");
+  });
 });
 
 describe("MessageHandler — commands & robustness", () => {

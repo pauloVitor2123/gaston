@@ -41,7 +41,7 @@ describe("BalanceService.summarize", () => {
       settled: (dir) => (dir === "in" ? 300000 : 120000),
     });
     const summary = await service.summarize(user, new Date(Date.UTC(2026, 7, 15)));
-    expect(summary.onHand).toBe(500000 + 300000 - 120000);
+    expect(summary!.onHand).toBe(500000 + 300000 - 120000);
   });
 
   it("projects month-end as on-hand + to-receive - to-pay (payables due this month)", async () => {
@@ -55,9 +55,9 @@ describe("BalanceService.summarize", () => {
       payables,
     });
     const summary = await service.summarize(user, new Date(Date.UTC(2026, 7, 15)));
-    expect(summary.toPay).toBe(312035);
-    expect(summary.toReceive).toBe(200000);
-    expect(summary.projected).toBe(500000 + 200000 - 312035);
+    expect(summary!.toPay).toBe(312035);
+    expect(summary!.toReceive).toBe(200000);
+    expect(summary!.projected).toBe(500000 + 200000 - 312035);
   });
 
   it("queries realized sums since the user's balanceSetAt and receivables until month end", async () => {
@@ -66,5 +66,14 @@ describe("BalanceService.summarize", () => {
     expect(balanceRepo.sumSettledSince).toHaveBeenCalledWith(1, "in", user.balanceSetAt);
     expect(balanceRepo.sumSettledSince).toHaveBeenCalledWith(1, "out", user.balanceSetAt);
     expect(balanceRepo.sumPendingUntil).toHaveBeenCalledWith(1, "in", new Date(Date.UTC(2026, 8, 1)));
+  });
+
+  it("returns null when the user never set a balance (no baseline to anchor)", async () => {
+    const { service, balanceRepo, payables } = makeService({ settled: () => 999999 });
+    const neverSet = { id: 1, balanceCents: 0, balanceSetAt: null } as User;
+    const summary = await service.summarize(neverSet, new Date(Date.UTC(2026, 7, 15)));
+    expect(summary).toBeNull();
+    expect(balanceRepo.sumSettledSince).not.toHaveBeenCalled();
+    expect(payables.listPayables).not.toHaveBeenCalled();
   });
 });
