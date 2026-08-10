@@ -8,8 +8,10 @@ import type {
 import type { CardInvoice, PaymentEvent, RecurringBill, Transaction } from "@/db/schema";
 import { PaymentService } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
+import { FixedClock } from "@/services/clock";
 
 const userId = 1;
+const NOW = new Date("2026-08-15T12:00:00.000Z");
 
 const pendingBill = {
   id: 55,
@@ -88,6 +90,7 @@ function makeService(overrides: Parameters<typeof makeRepos>[0] = {}) {
     repos.cardInvoiceRepo,
     repos.paymentEventRepo,
     repos.recurringBillRepo,
+    new FixedClock(NOW),
   );
   return { service, repos };
 }
@@ -203,7 +206,7 @@ describe("PaymentService.undo", () => {
     const result = await service.undo(userId, 900);
 
     expect(result).toMatchObject({ type: "transaction", amountCents: 18000 });
-    expect(repos.paymentEventRepo.void).toHaveBeenCalledWith(900);
+    expect(repos.paymentEventRepo.void).toHaveBeenCalledWith(900, NOW);
     const [, , patch] = patchOf(repos.transactionRepo.update);
     expect(patch).toMatchObject({ status: "pending", actualAmountCents: null, settledAt: null });
   });

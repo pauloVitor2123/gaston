@@ -118,7 +118,7 @@ export interface IRecurringBillRepository {
 }
 
 export interface IPendingConversationRepository {
-  findActiveByUser(userId: number): Promise<PendingConversation | null>;
+  findActiveByUser(userId: number, now: Date): Promise<PendingConversation | null>;
   create(data: NewPendingConversation): Promise<PendingConversation>;
   update(id: number, stateJson: Record<string, unknown>): Promise<PendingConversation>;
   delete(id: number): Promise<void>;
@@ -133,5 +133,5 @@ export interface IPaymentEventRepository {
     targetType: PaymentEvent["targetType"],
     targetId: number,
   ): Promise<PaymentEvent[]>;
-  void(id: number): Promise<void>;
+  void(id: number, at: Date): Promise<void>;
 }

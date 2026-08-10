@@ -48,10 +48,10 @@ export class PaymentEventRepository implements IPaymentEventRepository {
       );
   }
 
-  async void(id: number): Promise<void> {
+  async void(id: number, at: Date): Promise<void> {
     await this.db
       .update(paymentEvents)
-      .set({ voidedAt: new Date() })
+      .set({ voidedAt: at })
       .where(eq(paymentEvents.id, id));
   }
 }

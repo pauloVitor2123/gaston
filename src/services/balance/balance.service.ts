@@ -1,6 +1,6 @@
 import type { IBalanceRepository, IPayableLister, IUserRepository } from "@/types/repository";
 import type { User } from "@/db/schema";
-import { parseUtcDate, utcDayClamped } from "@/services/dates";
+import { utcDayClamped } from "@/services/dates";
 
 export interface BalanceSummary {
   base: number;
@@ -12,9 +12,8 @@ export interface BalanceSummary {
   projected: number;
 }
 
-function firstOfNextMonth(today: string): Date {
-  const date = parseUtcDate(today);
-  return utcDayClamped(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+function firstOfNextMonth(today: Date): Date {
+  return utcDayClamped(today.getUTCFullYear(), today.getUTCMonth() + 1, 1);
 }
 
 export class BalanceService {
@@ -28,9 +27,11 @@ export class BalanceService {
     await this.userRepo.setBalance(userId, amountCents, at);
   }
 
-  async summarize(user: User, today: string): Promise<BalanceSummary> {
+  async summarize(user: User, today: Date): Promise<BalanceSummary | null> {
+    if (user.balanceSetAt === null) return null;
+
     const monthEnd = firstOfNextMonth(today);
-    const since = user.balanceSetAt ?? new Date(0);
+    const since = user.balanceSetAt;
     const [receivedSince, spentSince, toReceive, payables] = await Promise.all([
       this.balanceRepo.sumSettledSince(user.id, "in", since),
       this.balanceRepo.sumSettledSince(user.id, "out", since),

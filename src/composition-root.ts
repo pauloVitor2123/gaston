@@ -4,6 +4,7 @@ import type { ILLMClient, LLMClientConfig } from "@/types/llm";
 import { OpenAICompatibleClient } from "@/services/llm/openai-compatible-client";
 import { LLMProvider } from "@/services/llm/llm-provider";
 import { CollectionAgent } from "@/services/collection/collection-agent";
+import { SystemClock } from "@/services/clock";
 import { TransactionService } from "@/services/transaction/transaction.service";
 import { PaymentService } from "@/services/payment/payment.service";
 import { RecurringBillService } from "@/services/recurring/recurring-bill.service";
@@ -36,6 +37,7 @@ function buildProvider(primary: LLMClientConfig, fallback: LLMClientConfig): ILL
 export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHandler {
   const db = drizzle(env.DB);
   const llmConfigs = buildLLMConfigs(env);
+  const clock = new SystemClock();
 
   const llm = buildProvider(llmConfigs.primary, llmConfigs.fallback);
 
@@ -54,12 +56,14 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     mantraRepo,
     transactionRepo,
     cardInvoiceRepo,
+    clock,
   );
   const paymentService = new PaymentService(
     transactionRepo,
     cardInvoiceRepo,
     new PaymentEventRepository(db),
     recurringBillRepo,
+    clock,
   );
   const recurringService = new RecurringBillService(
     categoryRepo,
@@ -90,5 +94,6 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
     new PendingConversationRepository(db),
     analyticsService,
     balanceService,
+    clock,
   );
 }
