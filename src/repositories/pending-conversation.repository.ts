@@ -36,7 +36,11 @@ export class PendingConversationRepository implements IPendingConversationReposi
     return row;
   }
 
-  async delete(id: number): Promise<void> {
-    await this.db.delete(pendingConversations).where(eq(pendingConversations.id, id));
+  async delete(id: number): Promise<boolean> {
+    const deleted = await this.db
+      .delete(pendingConversations)
+      .where(eq(pendingConversations.id, id))
+      .returning({ id: pendingConversations.id });
+    return deleted.length > 0;
   }
 }

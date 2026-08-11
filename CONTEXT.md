@@ -23,6 +23,20 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   sentinela de "desde a época" (isso somava o histórico inteiro contra uma base fictícia de R$ 0).
   Os handlers tratam o `null`: `/saldo` pede para definir; o rodapé do `/status` vira uma dica.
 
+## Resposta (BotReply)
+
+- **BotReply** — o valor de domínio que representa o que o Gaston responde: `{ text: string;
+  actions?: ReplyAction[] }`, **agnóstico de canal**. Um **ReplyAction** (`{ id, label }`) é um
+  botão tocável. O `MessageHandler` produz `BotReply`; **só o adapter Telegram (`index.ts`)
+  sabe renderizar** — mensagem nova (fluxo de texto) vs. edição da mensagem de origem (fluxo de
+  toque), teclado inline, `answerCallbackQuery`. O domínio nunca sabe se virou mensagem ou edição.
+- **Round-trip do toque** — botão inline dispara um `callback_query` com `data =
+  "<pendingId>:<escolha>"` (`escolha` ∈ `yes`/`no`). O handler entra por `handleCallback`,
+  carrega o pending ativo e faz **id-match**: se o `id` não bate (expirou ou foi substituído),
+  responde "botão expirou" **sem agir**. Confirmações em voo continuam ancoradas em
+  `pending_conversations` (o botão só referencia; ver [[ADR-001]]). Digitar "sim/não"
+  (`affirmationOf`) permanece como fallback e converge no mesmo ponto de resolução.
+
 ## Tempo
 
 - **Clock** — o seam (interface) que é a única fonte de tempo do sistema. Expõe `now(): Date`
