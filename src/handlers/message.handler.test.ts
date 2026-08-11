@@ -95,7 +95,7 @@ function makeRepos(overrides: {
       ),
       create: vi.fn().mockResolvedValue({ id: 1 }),
       update: vi.fn(),
-      delete: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(true),
     } as unknown as IPendingConversationRepository,
   };
 }
@@ -200,8 +200,8 @@ describe("MessageHandler — record flow", () => {
     const { handler, transactionService } = makeHandler();
     const reply = await handler.handle(100, "almoço 35 reais nubank", "Test User");
     expect(transactionService.persist).toHaveBeenCalledOnce();
-    expect(reply).toContain("Almoço");
-    expect(reply).toContain("R$ 35,00");
+    expect(reply.text).toContain("Almoço");
+    expect(reply.text).toContain("R$ 35,00");
   });
 
   it("saves a 24h draft and returns the question when the agent asks", async () => {
@@ -211,7 +211,7 @@ describe("MessageHandler — record flow", () => {
     expect(created.stateJson.kind).toBe("draft");
     expect(created.stateJson.cycles).toBe(1);
     expect(created.expiresAt.getTime() - NOW.getTime()).toBe(24 * 60 * 60 * 1000);
-    expect(reply).toBe("Qual o valor?");
+    expect(reply.text).toBe("Qual o valor?");
   });
 
   it("resumes a draft and persists when the agent completes it", async () => {
@@ -222,7 +222,7 @@ describe("MessageHandler — record flow", () => {
     const reply = await handler.handle(100, "35 reais", "Test User");
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(77);
     expect(transactionService.persist).toHaveBeenCalledOnce();
-    expect(reply).toContain("R$ 35,00");
+    expect(reply.text).toContain("R$ 35,00");
   });
 
   it("keeps the draft alive (no abort) when the cycle cap is reached", async () => {
@@ -234,7 +234,7 @@ describe("MessageHandler — record flow", () => {
     expect(repos.pendingRepo.delete).not.toHaveBeenCalled();
     const updated = (repos.pendingRepo.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(updated[1].cycles).toBe(3);
-    expect(reply).toContain("guardado");
+    expect(reply.text).toContain("guardado");
   });
 
   it("passes due_date and already_paid through and flags a future obligation in the reply", async () => {
@@ -252,7 +252,7 @@ describe("MessageHandler — record flow", () => {
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.due_date).toBe("2099-12-10");
     expect(persisted.already_paid).toBe(false);
-    expect(reply).toContain("10/12");
+    expect(reply.text).toContain("10/12");
   });
 
   it("flags a pending obligation with no due date when the user hasn't paid yet", async () => {
@@ -266,7 +266,7 @@ describe("MessageHandler — record flow", () => {
     };
     const { handler } = makeHandler({ kind: "draft", draft: unpaidNoDate });
     const reply = await handler.handle(100, "boleto da luz 150, não paguei ainda", "Test User");
-    expect(reply).toContain("pendente");
+    expect(reply.text).toContain("pendente");
   });
 
   it("infers the category from the description when the draft omits it", async () => {
@@ -295,8 +295,8 @@ describe("MessageHandler — record flow", () => {
     const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: noCategory });
     const reply = await handler.handle(100, "gastei 50 numa loja", "Test User");
     expect(transactionService.persist).not.toHaveBeenCalled();
-    expect(reply.toLowerCase()).toContain("categoria");
-    expect(reply).toContain("Alimentação");
+    expect(reply.text.toLowerCase()).toContain("categoria");
+    expect(reply.text).toContain("Alimentação");
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("draft");
   });
@@ -311,7 +311,7 @@ describe("MessageHandler — record flow", () => {
     const { handler, transactionService, repos } = makeHandler({ kind: "draft", draft: income });
     const reply = await handler.handle(100, "recebi 2000 de salário", "Test User");
     expect(transactionService.persist).toHaveBeenCalledOnce();
-    expect(reply.toLowerCase()).not.toContain("categoria");
+    expect(reply.text.toLowerCase()).not.toContain("categoria");
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.direction).toBe("in");
     expect(repos.pendingRepo.create).not.toHaveBeenCalled();
@@ -338,7 +338,7 @@ describe("MessageHandler — record flow", () => {
     const reply = await handler.handle(100, "tv 2000 no santander", "Test User");
     const persisted = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(persisted.payment_method).toBe("cash");
-    expect(reply.toLowerCase()).toContain("cartão");
+    expect(reply.text.toLowerCase()).toContain("cartão");
   });
 });
 
@@ -361,10 +361,10 @@ describe("MessageHandler — query flow", () => {
       from: "2026-08-01",
       to: "2026-08-31",
     });
-    expect(reply).toContain("Alimentação — R$ 450,00 (60%)");
-    expect(reply).toContain("Transporte — R$ 300,00 (40%)");
-    expect(reply).toContain("Total: R$ 750,00");
-    expect(reply).toContain("maior: Alimentação");
+    expect(reply.text).toContain("Alimentação — R$ 450,00 (60%)");
+    expect(reply.text).toContain("Transporte — R$ 300,00 (40%)");
+    expect(reply.text).toContain("Total: R$ 750,00");
+    expect(reply.text).toContain("maior: Alimentação");
   });
 
   it("reports an empty period without dividing by zero", async () => {
@@ -373,7 +373,7 @@ describe("MessageHandler — query flow", () => {
       params: { group_by: "category", from: "2026-08-01", to: "2026-08-31" },
     });
     const reply = await handler.handle(100, "quanto gastei", "Test User");
-    expect(reply.toLowerCase()).toContain("nada encontrado");
+    expect(reply.text.toLowerCase()).toContain("nada encontrado");
   });
 
   it("returns a single total for group_by 'none'", async () => {
@@ -386,8 +386,8 @@ describe("MessageHandler — query flow", () => {
       totalCents: 150000,
     });
     const reply = await handler.handle(100, "quanto gastei esse mês", "Test User");
-    expect(reply).toContain("Total: R$ 1500,00");
-    expect(reply).not.toContain("%");
+    expect(reply.text).toContain("Total: R$ 1500,00");
+    expect(reply.text).not.toContain("%");
   });
 });
 
@@ -399,7 +399,7 @@ describe("MessageHandler — set balance (NL) flow", () => {
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("balance_confirm");
     expect(created.stateJson.amountCents).toBe(500000);
-    expect(reply).toContain("Definir saldo como R$ 5000,00");
+    expect(reply.text).toContain("Definir saldo como R$ 5000,00");
   });
 
   it("writes the balance on 'sim' and does not call the agent", async () => {
@@ -413,7 +413,7 @@ describe("MessageHandler — set balance (NL) flow", () => {
     const reply = await handler.handle(100, "sim", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
     expect(balance.setBalance).toHaveBeenCalledWith(1, 500000, expect.any(Date));
-    expect(reply).toContain("Saldo definido: R$ 5000,00");
+    expect(reply.text).toContain("Saldo definido: R$ 5000,00");
   });
 
   it("does not write the balance on 'não'", async () => {
@@ -426,7 +426,7 @@ describe("MessageHandler — set balance (NL) flow", () => {
     );
     const reply = await handler.handle(100, "não", "Test User");
     expect(balance.setBalance).not.toHaveBeenCalled();
-    expect(reply.toLowerCase()).toContain("deixei como estava");
+    expect(reply.text.toLowerCase()).toContain("deixei como estava");
   });
 });
 
@@ -441,15 +441,15 @@ describe("MessageHandler — payment flow", () => {
     expect(payment.pay).not.toHaveBeenCalled();
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("payment_confirm");
-    expect(reply).toContain("Confirma pagar conta de luz");
-    expect(reply).toContain("R$ 180,00");
+    expect(reply.text).toContain("Confirma pagar conta de luz");
+    expect(reply.text).toContain("R$ 180,00");
   });
 
   it("rejects a pay turn whose target is not in the payables list", async () => {
     const { handler, payment } = makeHandler({ kind: "pay", target: { type: "transaction", id: 999 } });
     const reply = await handler.handle(100, "paguei o aluguel", "Test User");
     expect(payment.pay).not.toHaveBeenCalled();
-    expect(reply.toLowerCase()).toContain("não encontrei");
+    expect(reply.text.toLowerCase()).toContain("não encontrei");
   });
 
   it("executes the payment on 'sim' and does not call the agent", async () => {
@@ -465,7 +465,7 @@ describe("MessageHandler — payment flow", () => {
     const reply = await handler.handle(100, "sim", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
     expect(payment.pay).toHaveBeenCalledWith(1, { type: "transaction", id: 55 }, undefined);
-    expect(reply).toContain("Pago: conta de luz");
+    expect(reply.text).toContain("Pago: conta de luz");
   });
 
   it("cancels the payment on 'não' without mutating", async () => {
@@ -479,7 +479,7 @@ describe("MessageHandler — payment flow", () => {
     const reply = await handler.handle(100, "não", "Test User");
     expect(payment.pay).not.toHaveBeenCalled();
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
-    expect(reply.toLowerCase()).toContain("deixei como estava");
+    expect(reply.text.toLowerCase()).toContain("deixei como estava");
   });
 
   it("discards the confirmation and reprocesses when the reply is neither sim nor não", async () => {
@@ -493,7 +493,7 @@ describe("MessageHandler — payment flow", () => {
     const reply = await handler.handle(100, "na verdade almoço 35 reais nubank", "Test User");
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
     expect(agent.run).toHaveBeenCalledOnce();
-    expect(reply).toContain("Almoço");
+    expect(reply.text).toContain("Almoço");
   });
 
   it("surfaces a PaymentError message instead of crashing", async () => {
@@ -508,7 +508,7 @@ describe("MessageHandler — payment flow", () => {
       payment,
     );
     const reply = await handler.handle(100, "sim", "Test User");
-    expect(reply).toBe("Essa fatura já está paga.");
+    expect(reply.text).toBe("Essa fatura já está paga.");
   });
 });
 
@@ -519,7 +519,7 @@ describe("MessageHandler — undo flow", () => {
     expect(payment.undo).not.toHaveBeenCalled();
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("undo_confirm");
-    expect(reply).toContain("Confirma desfazer");
+    expect(reply.text).toContain("Confirma desfazer");
   });
 
   it("executes the undo on 'sim'", async () => {
@@ -529,7 +529,7 @@ describe("MessageHandler — undo flow", () => {
     );
     const reply = await handler.handle(100, "sim", "Test User");
     expect(payment.undo).toHaveBeenCalledWith(1, 900);
-    expect(reply).toContain("Estornei: conta de luz");
+    expect(reply.text).toContain("Estornei: conta de luz");
   });
 });
 
@@ -544,8 +544,8 @@ describe("MessageHandler — recurring flow", () => {
     const { handler } = makeHandler(recurringTurn, {}, makePaymentService(), recurring);
     const reply = await handler.handle(100, "boleto internet 299 todo dia 15", "Test User");
     expect(recurring.create).toHaveBeenCalledOnce();
-    expect(reply).toContain("Internet");
-    expect(reply).toContain("15/08");
+    expect(reply.text).toContain("Internet");
+    expect(reply.text).toContain("15/08");
   });
 
   it("asks confirmation before deleting a recurring bill", async () => {
@@ -563,7 +563,7 @@ describe("MessageHandler — recurring flow", () => {
     expect(recurring.delete).not.toHaveBeenCalled();
     const created = (repos.pendingRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(created.stateJson.kind).toBe("delete_recurring_confirm");
-    expect(reply).toContain("Confirma cancelar");
+    expect(reply.text).toContain("Confirma cancelar");
   });
 
   it("deletes the recurring bill on 'sim'", async () => {
@@ -581,7 +581,7 @@ describe("MessageHandler — recurring flow", () => {
     );
     const reply = await handler.handle(100, "sim", "Test User");
     expect(recurring.delete).toHaveBeenCalledWith(1, 3);
-    expect(reply).toContain("Cancelei a conta recorrente");
+    expect(reply.text).toContain("Cancelei a conta recorrente");
   });
 });
 
@@ -601,9 +601,9 @@ describe("MessageHandler — installment flow", () => {
     const { handler } = makeHandler(installmentTurn, {}, makePaymentService(), makeRecurringService(), installment);
     const reply = await handler.handle(100, "máquina de lavar 3668 em 5x no nubank", "Test User");
     expect(installment.create).toHaveBeenCalledOnce();
-    expect(reply).toContain("5x");
-    expect(reply).toContain("R$ 3668,00");
-    expect(reply).toContain("20/03");
+    expect(reply.text).toContain("5x");
+    expect(reply.text).toContain("R$ 3668,00");
+    expect(reply.text).toContain("20/03");
   });
 
   it("warns to register a card when the installment card is unknown", async () => {
@@ -613,7 +613,7 @@ describe("MessageHandler — installment flow", () => {
     );
     const { handler } = makeHandler(installmentTurn, {}, makePaymentService(), makeRecurringService(), installment);
     const reply = await handler.handle(100, "tv 2000 em 10x no santander", "Test User");
-    expect(reply.toLowerCase()).toContain("cartão");
+    expect(reply.text.toLowerCase()).toContain("cartão");
   });
 });
 
@@ -633,9 +633,9 @@ describe("MessageHandler — saldo flow", () => {
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     const reply = await handler.handle(100, "/saldo", "Test User");
     expect(balance.setBalance).not.toHaveBeenCalled();
-    expect(reply).toContain("Na conta hoje: R$ 6800,00");
-    expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
-    expect(reply).toContain("A pagar no mês: R$ 3120,35");
+    expect(reply.text).toContain("Na conta hoje: R$ 6800,00");
+    expect(reply.text).toContain("Projeção fim do mês: R$ 5679,65");
+    expect(reply.text).toContain("A pagar no mês: R$ 3120,35");
   });
 
   it("sets the balance on /saldo <valor> and confirms", async () => {
@@ -643,22 +643,22 @@ describe("MessageHandler — saldo flow", () => {
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     const reply = await handler.handle(100, "/saldo 5.000,50", "Test User");
     expect(balance.setBalance).toHaveBeenCalledWith(1, 500050, expect.any(Date));
-    expect(reply).toContain("Saldo definido: R$ 5000,50");
+    expect(reply.text).toContain("Saldo definido: R$ 5000,50");
   });
 
   it("rejects an unparseable amount without setting", async () => {
     const { handler, balance } = makeHandler();
     const reply = await handler.handle(100, "/saldo abc", "Test User");
     expect(balance.setBalance).not.toHaveBeenCalled();
-    expect(reply.toLowerCase()).toContain("não entendi");
+    expect(reply.text.toLowerCase()).toContain("não entendi");
   });
 
   it("adds the balance footer to /status", async () => {
     const { handler, balance } = makeHandler();
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     const reply = await handler.handle(100, "/status", "Test User");
-    expect(reply).toContain("Na conta hoje: R$ 6800,00");
-    expect(reply).toContain("Projeção fim do mês: R$ 5679,65");
+    expect(reply.text).toContain("Na conta hoje: R$ 6800,00");
+    expect(reply.text).toContain("Projeção fim do mês: R$ 5679,65");
   });
 
   it("prompts to set the balance on /saldo when it was never defined (BUG-4)", async () => {
@@ -666,18 +666,18 @@ describe("MessageHandler — saldo flow", () => {
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     const reply = await handler.handle(100, "/saldo", "Test User");
     expect(balance.setBalance).not.toHaveBeenCalled();
-    expect(reply).toContain("ainda não definiu seu saldo");
-    expect(reply).toContain("/saldo 5000");
-    expect(reply).not.toContain("Na conta hoje");
+    expect(reply.text).toContain("ainda não definiu seu saldo");
+    expect(reply.text).toContain("/saldo 5000");
+    expect(reply.text).not.toContain("Na conta hoje");
   });
 
   it("hints to set the balance in the /status footer when it was never defined (BUG-4)", async () => {
     const { handler, balance } = makeHandler();
     (balance.summarize as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     const reply = await handler.handle(100, "/status", "Test User");
-    expect(reply).toContain("Situação do mês");
-    expect(reply).not.toContain("Na conta hoje");
-    expect(reply).toContain("/saldo");
+    expect(reply.text).toContain("Situação do mês");
+    expect(reply.text).not.toContain("Na conta hoje");
+    expect(reply.text).toContain("/saldo");
   });
 });
 
@@ -699,7 +699,7 @@ describe("MessageHandler — commands & robustness", () => {
   it("returns onboarding for /start without invoking the agent", async () => {
     const { handler, agent } = makeHandler();
     const reply = await handler.handle(100, "/start", "Test User");
-    expect(reply).toContain("Gaston");
+    expect(reply.text).toContain("Gaston");
     expect(agent.run).not.toHaveBeenCalled();
   });
 
@@ -708,9 +708,9 @@ describe("MessageHandler — commands & robustness", () => {
     const reply = await handler.handle(100, "/pendentes", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
     expect(payment.listPayables).toHaveBeenCalledWith(1);
-    expect(reply).toContain("conta de luz");
-    expect(reply).toContain("R$ 180,00");
-    expect(reply).toContain("10/08");
+    expect(reply.text).toContain("conta de luz");
+    expect(reply.text).toContain("R$ 180,00");
+    expect(reply.text).toContain("10/08");
   });
 
   it("shows a friendly message on /pendentes when nothing is open", async () => {
@@ -718,7 +718,7 @@ describe("MessageHandler — commands & robustness", () => {
     (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
     const reply = await handler.handle(100, "/pendentes", "Test User");
-    expect(reply.toLowerCase()).toContain("nada");
+    expect(reply.text.toLowerCase()).toContain("nada");
   });
 
   it("splits payables into overdue and upcoming on /status", async () => {
@@ -730,11 +730,11 @@ describe("MessageHandler — commands & robustness", () => {
     const { handler, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
     const reply = await handler.handle(100, "/status", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
-    expect(reply).toContain("Atrasados");
-    expect(reply).toContain("conta velha");
-    expect(reply).toContain("A vencer");
-    expect(reply).toContain("boleto futuro");
-    expect(reply).toContain("Total em aberto: R$ 350,00");
+    expect(reply.text).toContain("Atrasados");
+    expect(reply.text).toContain("conta velha");
+    expect(reply.text).toContain("A vencer");
+    expect(reply.text).toContain("boleto futuro");
+    expect(reply.text).toContain("Total em aberto: R$ 350,00");
   });
 
   it("shows an all-clear on /status when nothing is open", async () => {
@@ -742,16 +742,16 @@ describe("MessageHandler — commands & robustness", () => {
     (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
     const reply = await handler.handle(100, "/status", "Test User");
-    expect(reply).toContain("em dia");
+    expect(reply.text).toContain("em dia");
   });
 
   it("lists working commands and NL examples on /help without invoking the agent", async () => {
     const { handler, agent } = makeHandler();
     const reply = await handler.handle(100, "/help", "Test User");
     expect(agent.run).not.toHaveBeenCalled();
-    expect(reply).toContain("/pendentes");
-    expect(reply).toContain("/cancelar");
-    expect(reply).toContain("almoço");
+    expect(reply.text).toContain("/pendentes");
+    expect(reply.text).toContain("/cancelar");
+    expect(reply.text).toContain("almoço");
   });
 
   it("cancels any active pending on /cancelar", async () => {
@@ -761,7 +761,7 @@ describe("MessageHandler — commands & robustness", () => {
     const reply = await handler.handle(100, "/cancelar", "Test User");
     expect(repos.pendingRepo.delete).toHaveBeenCalledWith(42);
     expect(agent.run).not.toHaveBeenCalled();
-    expect(reply.toLowerCase()).toContain("cancelei");
+    expect(reply.text.toLowerCase()).toContain("cancelei");
   });
 
   it("drops a corrupt pending state and processes the message fresh", async () => {
@@ -799,7 +799,7 @@ describe("MessageHandler — commands & robustness", () => {
       new FixedClock(NOW),
     );
     const reply = await handler.handle(100, "almoço 35", "Test User");
-    expect(reply).toContain("problema");
+    expect(reply.text).toContain("problema");
     expect(transactionService.persist).not.toHaveBeenCalled();
   });
 
@@ -832,8 +832,102 @@ describe("MessageHandler — commands & robustness", () => {
 
     const reply = await handler.handle(100, "boleto 100 vence amanhã", "Test User");
 
-    expect(reply).toContain("pendente");
+    expect(reply.text).toContain("pendente");
     const [, , , today] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(today).toEqual(new Date(Date.UTC(2026, 7, 5)));
+  });
+});
+
+describe("MessageHandler — BotReply seam (inline buttons)", () => {
+  it("attaches confirm/cancel actions to a payment confirmation", async () => {
+    const { handler } = makeHandler({
+      kind: "pay",
+      target: { type: "transaction", id: 55 },
+      amountCents: undefined,
+    });
+    const reply = await handler.handle(100, "paguei a conta de luz", "Test User");
+    expect(reply.actions).toEqual([
+      { id: "1:yes", label: "✅ Confirmar" },
+      { id: "1:no", label: "✕ Não" },
+    ]);
+    expect(reply.text).not.toContain("(sim/não)");
+  });
+
+  it("leaves plain replies without actions", async () => {
+    const { handler } = makeHandler();
+    const reply = await handler.handle(100, "/help", "Test User");
+    expect(reply.actions).toBeUndefined();
+  });
+
+  it("resolves a confirmation when the tapped button id matches the active pending", async () => {
+    const { handler, payment, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    const reply = await handler.handleCallback(100, "70:yes", "Test User");
+    expect(payment.pay).toHaveBeenCalledWith(1, { type: "transaction", id: 55 }, undefined);
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
+    expect(reply.text).toContain("Pago: conta de luz");
+    expect(reply.actions).toBeUndefined();
+  });
+
+  it("cancels on a 'no' tap without mutating", async () => {
+    const { handler, payment, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    const reply = await handler.handleCallback(100, "70:no", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(70);
+    expect(reply.text.toLowerCase()).toContain("deixei como estava");
+  });
+
+  it("rejects a stale button whose id does not match the active pending", async () => {
+    const { handler, payment } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    const reply = await handler.handleCallback(100, "5:yes", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(reply.text.toLowerCase()).toContain("expirou");
+  });
+
+  it("rejects a tap when there is no active pending", async () => {
+    const { handler, payment } = makeHandler(
+      { kind: "question", text: "x" },
+      { findActiveByUser: () => Promise.resolve(null) },
+    );
+    const reply = await handler.handleCallback(100, "70:yes", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(reply.text.toLowerCase()).toContain("expirou");
+  });
+
+  it("rejects malformed callback data", async () => {
+    const { handler } = makeHandler();
+    const reply = await handler.handleCallback(100, "garbage", "Test User");
+    expect(reply.text.toLowerCase()).toContain("expirou");
+  });
+
+  it("on a double-tap only the tap that claims the pending acts", async () => {
+    const { handler, payment, repos } = makeHandler(
+      { kind: "question", text: "x" },
+      {
+        findActiveByUser: () =>
+          Promise.resolve(pendingConfirm({ kind: "payment_confirm", target: { type: "transaction", id: 55 }, description: "conta de luz" })),
+      },
+    );
+    (repos.pendingRepo.delete as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const reply = await handler.handleCallback(100, "70:yes", "Test User");
+    expect(payment.pay).not.toHaveBeenCalled();
+    expect(reply.text.toLowerCase()).toContain("expirou");
   });
 });

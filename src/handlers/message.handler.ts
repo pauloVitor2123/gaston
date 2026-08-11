@@ -24,6 +24,7 @@ import type { AnalyticsService, SpendingReport } from "@/services/analytics/anal
 import type { QuerySpendingArgs } from "@/services/analytics/query";
 import type { BalanceService, BalanceSummary } from "@/services/balance/balance.service";
 import { formatReais, parseBRLToCents } from "@/services/money";
+import { type BotReply, type Choice, confirmActions, parseCallbackData } from "@/handlers/reply";
 
 type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 type PaymentConfirmState = {
@@ -90,6 +91,8 @@ const INSTALLMENT_NO_CARD =
 const GENERIC_ERROR =
   "Tive um problema para processar isso agora 😕. Pode tentar de novo em instantes?";
 
+const EXPIRED_BUTTON = "Esse botão expirou 🙂. Me manda de novo o que você quer fazer.";
+
 const UNKNOWN_CARD_WARNING =
   "\n⚠️ Não reconheci o cartão citado, registrei como dinheiro. Cadastre-o com /cartao.";
 
@@ -112,17 +115,38 @@ export class MessageHandler {
     private readonly clock: Clock,
   ) {}
 
-  async handle(chatId: number, text: string, senderName: string): Promise<string> {
+  async handle(chatId: number, text: string, senderName: string): Promise<BotReply> {
     try {
-      return await this.route(chatId, text, senderName);
+      const result = await this.route(chatId, text, senderName);
+      return typeof result === "string" ? { text: result } : result;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`MessageHandler.handle failed: ${detail}`, error);
-      return GENERIC_ERROR;
+      return { text: GENERIC_ERROR };
     }
   }
 
-  private async route(chatId: number, text: string, senderName: string): Promise<string> {
+  async handleCallback(chatId: number, actionId: string, senderName: string): Promise<BotReply> {
+    try {
+      const user = await this.resolveUser(chatId, senderName);
+      const parsed = parseCallbackData(actionId);
+      if (!parsed) return { text: EXPIRED_BUTTON };
+
+      const pending = await this.pendingRepo.findActiveByUser(user.id, this.clock.now());
+      if (!pending || pending.id !== parsed.pendingId) return { text: EXPIRED_BUTTON };
+
+      const state = isPendingState(pending.stateJson) ? pending.stateJson : null;
+      if (!state || state.kind === "draft") return { text: EXPIRED_BUTTON };
+
+      return { text: await this.applyConfirmation(pending, state, parsed.choice, user) };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`MessageHandler.handleCallback failed: ${detail}`, error);
+      return { text: GENERIC_ERROR };
+    }
+  }
+
+  private async route(chatId: number, text: string, senderName: string): Promise<string | BotReply> {
     const user = await this.resolveUser(chatId, senderName);
     const today = this.clock.today(user.timezone);
     const command = commandOf(text);
@@ -233,8 +257,17 @@ export class MessageHandler {
       await this.pendingRepo.delete(pending.id);
       return null;
     }
+    return this.applyConfirmation(pending, state, answer, user);
+  }
 
-    await this.pendingRepo.delete(pending.id);
+  private async applyConfirmation(
+    pending: PendingConversation,
+    state: ConfirmState,
+    answer: Choice,
+    user: User,
+  ): Promise<string> {
+    const claimed = await this.pendingRepo.delete(pending.id);
+    if (!claimed) return EXPIRED_BUTTON;
     if (answer === "no") return "Ok, deixei como estava. 👍";
 
     try {
@@ -265,7 +298,7 @@ export class MessageHandler {
     draft: DraftState | null,
     pending: PendingConversation | null,
     today: Date,
-  ): Promise<string> {
+  ): Promise<string | BotReply> {
     const sanitized = sanitizeUserMessage(text);
     const [categories, cards, payables, recentPayments, recurringBills] = await Promise.all([
       this.categoryRepo.listByUser(user.id),
@@ -377,7 +410,7 @@ export class MessageHandler {
     target: PaymentTarget,
     amountCents: number | undefined,
     payables: Payable[],
-  ): Promise<string> {
+  ): Promise<string | BotReply> {
     const payable = payables.find((p) => p.type === target.type && p.id === target.id);
     if (!payable) {
       if (pending) await this.pendingRepo.delete(pending.id);
@@ -391,18 +424,24 @@ export class MessageHandler {
       amountCents,
       description: payable.description,
     };
-    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
-    return `Confirma pagar ${payable.description} — ${formatReais(amount)}? (sim/não)`;
+    const created = await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return {
+      text: `Confirma pagar ${payable.description} — ${formatReais(amount)}?`,
+      actions: confirmActions(created.id),
+    };
   }
 
   private async startBalanceConfirm(
     user: User,
     pending: PendingConversation | null,
     amountCents: number,
-  ): Promise<string> {
+  ): Promise<BotReply> {
     const state: BalanceConfirmState = { kind: "balance_confirm", amountCents };
-    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
-    return `Definir saldo como ${formatReais(amountCents)}? (sim/não)`;
+    const created = await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return {
+      text: `Definir saldo como ${formatReais(amountCents)}?`,
+      actions: confirmActions(created.id),
+    };
   }
 
   private async startUndoConfirm(
@@ -410,7 +449,7 @@ export class MessageHandler {
     pending: PendingConversation | null,
     eventId: number,
     recentPayments: RecentPayment[],
-  ): Promise<string> {
+  ): Promise<string | BotReply> {
     const payment = recentPayments.find((p) => p.eventId === eventId);
     if (!payment) {
       if (pending) await this.pendingRepo.delete(pending.id);
@@ -422,8 +461,11 @@ export class MessageHandler {
       eventId,
       description: payment.description,
     };
-    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
-    return `Confirma desfazer o pagamento de ${payment.description} — ${formatReais(payment.amountCents)}? (sim/não)`;
+    const created = await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return {
+      text: `Confirma desfazer o pagamento de ${payment.description} — ${formatReais(payment.amountCents)}?`,
+      actions: confirmActions(created.id),
+    };
   }
 
   private async recordRecurring(
@@ -486,7 +528,7 @@ export class MessageHandler {
     pending: PendingConversation | null,
     billId: number,
     recurringBills: RecurringBill[],
-  ): Promise<string> {
+  ): Promise<string | BotReply> {
     const bill = recurringBills.find((b) => b.id === billId);
     if (!bill) {
       if (pending) await this.pendingRepo.delete(pending.id);
@@ -498,8 +540,11 @@ export class MessageHandler {
       billId,
       description: bill.description,
     };
-    await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
-    return `Confirma cancelar a conta recorrente ${bill.description} — ${formatReais(bill.expectedAmountCents)}/mês? (sim/não)`;
+    const created = await this.replacePending(user, pending, state, CONFIRM_TTL_MS);
+    return {
+      text: `Confirma cancelar a conta recorrente ${bill.description} — ${formatReais(bill.expectedAmountCents)}/mês?`,
+      actions: confirmActions(created.id),
+    };
   }
 
   private async saveQuestion(
@@ -529,9 +574,9 @@ export class MessageHandler {
     pending: PendingConversation | null,
     state: PendingState,
     ttlMs: number,
-  ): Promise<void> {
+  ): Promise<PendingConversation> {
     if (pending) await this.pendingRepo.delete(pending.id);
-    await this.pendingRepo.create({
+    return this.pendingRepo.create({
       userId: user.id,
       stateJson: state as unknown as Record<string, unknown>,
       expiresAt: new Date(this.clock.now().getTime() + ttlMs),

@@ -38,11 +38,12 @@ describe("PendingConversationRepository", () => {
     expect((updated.stateJson as { step: number }).step).toBe(2);
   });
 
-  it("delete removes the conversation", async () => {
+  it("delete removes the conversation and reports whether a row was claimed", async () => {
     const { repo, userId } = await setup(8004);
     const conv = await repo.create({ userId, stateJson: { step: 1 }, expiresAt: future() });
 
-    await repo.delete(conv.id);
+    expect(await repo.delete(conv.id)).toBe(true);
     expect(await repo.findActiveByUser(userId, new Date())).toBeNull();
+    expect(await repo.delete(conv.id)).toBe(false);
   });
 });

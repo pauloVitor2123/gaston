@@ -121,7 +121,7 @@ export interface IPendingConversationRepository {
   findActiveByUser(userId: number, now: Date): Promise<PendingConversation | null>;
   create(data: NewPendingConversation): Promise<PendingConversation>;
   update(id: number, stateJson: Record<string, unknown>): Promise<PendingConversation>;
-  delete(id: number): Promise<void>;
+  delete(id: number): Promise<boolean>;
 }
 
 export interface IPaymentEventRepository {
