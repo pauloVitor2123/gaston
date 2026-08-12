@@ -10,7 +10,7 @@ import type { Direction, TransactionDraft } from "@/services/collection/draft";
 import type { Payable, PaymentService, PaymentTarget, RecentPayment } from "@/services/payment/payment.service";
 import { PaymentError } from "@/services/payment/errors";
 import { settlesOnRecord, type TransactionService, type TransactionInput } from "@/services/transaction/transaction.service";
-import { formatDayMonth, parseUtcDate, toIsoDate } from "@/services/dates";
+import { firstOfNextMonth, formatDayMonth, parseUtcDate, toIsoDate } from "@/services/dates";
 import type { Clock } from "@/services/clock";
 import type { RecurringBillService } from "@/services/recurring/recurring-bill.service";
 import type { RecordRecurringBillArgs } from "@/services/recurring/tools";
@@ -78,7 +78,7 @@ const HELP =
   "Ou é só me escrever naturalmente:\n" +
   EXAMPLES;
 
-const NO_PENDING = "Você não tem nada em aberto. 🎉";
+const NO_PENDING = "Você não tem nada em aberto neste mês. 🎉";
 
 const BALANCE_NOT_SET =
   "💡 Você ainda não definiu seu saldo.\n\n" +
@@ -163,7 +163,7 @@ export class MessageHandler {
         : "Não há nada em andamento para cancelar.";
     }
     if (command === "/help") return HELP;
-    if (command === "/pendentes") return this.listPending(user);
+    if (command === "/pendentes") return this.listPending(user, today);
     if (command === "/status") return this.showStatus(user, today);
     if (command === "/saldo") return this.handleSaldo(user, text, today);
 
@@ -183,11 +183,12 @@ export class MessageHandler {
     return this.runAgent(user, text, state?.kind === "draft" ? state : null, activePending, today);
   }
 
-  private async listPending(user: User): Promise<string> {
+  private async listPending(user: User, today: Date): Promise<string> {
     const payables = await this.paymentService.listPayables(user.id);
-    if (payables.length === 0) return NO_PENDING;
+    const { all } = scopeToMonth(payables, today);
+    if (all.length === 0) return NO_PENDING;
 
-    const lines = sortByDue(payables).map(payableLine);
+    const lines = sortByDue(all).map(payableLine);
     return `📋 Pendentes:\n${lines.join("\n")}`;
   }
 
@@ -197,14 +198,14 @@ export class MessageHandler {
       this.balanceService.summarize(user, today),
     ]);
     const footer = balanceFooter(summary);
+    const { overdue: overdueUnsorted, upcoming: upcomingUnsorted, all } = scopeToMonth(payables, today);
 
-    if (payables.length === 0) {
-      return `📊 Situação do mês\n\nVocê está em dia, nada em aberto. 🎉\n${footer}`;
+    if (all.length === 0) {
+      return `📊 Situação do mês\n\nVocê está em dia neste mês, nada em aberto. 🎉\n${footer}`;
     }
 
-    const todayMs = today.getTime();
-    const overdue = sortByDue(payables.filter((p) => p.dueDate.getTime() < todayMs));
-    const upcoming = sortByDue(payables.filter((p) => p.dueDate.getTime() >= todayMs));
+    const overdue = sortByDue(overdueUnsorted);
+    const upcoming = sortByDue(upcomingUnsorted);
 
     const sections: string[] = [];
     if (overdue.length) {
@@ -214,7 +215,7 @@ export class MessageHandler {
       sections.push(`🟡 A vencer (${formatReais(sumPayables(upcoming))}):\n${upcoming.map(payableLine).join("\n")}`);
     }
 
-    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(payables))}\n${footer}`;
+    return `📊 Situação do mês\n\n${sections.join("\n\n")}\n\nTotal em aberto: ${formatReais(sumPayables(all))}\n${footer}`;
   }
 
   private async handleSaldo(user: User, text: string, today: Date): Promise<string> {
@@ -657,6 +658,19 @@ function affirmationOf(text: string): "yes" | "no" | null {
   if (/^(sim|s|isso|pode|confirmo?|confirma|ok|claro|aham|yes|👍)\b/.test(clean)) return "yes";
   if (/^(n[ãa]o|n|cancela(r)?|deixa|para|nope|no)\b/.test(clean)) return "no";
   return null;
+}
+
+function scopeToMonth(
+  payables: Payable[],
+  today: Date,
+): { overdue: Payable[]; upcoming: Payable[]; all: Payable[] } {
+  const todayMs = today.getTime();
+  const monthEndMs = firstOfNextMonth(today).getTime();
+  const overdue = payables.filter((p) => p.dueDate.getTime() < todayMs);
+  const upcoming = payables.filter(
+    (p) => p.dueDate.getTime() >= todayMs && p.dueDate.getTime() < monthEndMs,
+  );
+  return { overdue, upcoming, all: [...overdue, ...upcoming] };
 }
 
 function sortByDue(payables: Payable[]): Payable[] {

@@ -1,6 +1,6 @@
 import type { IBalanceRepository, IPayableLister, IUserRepository } from "@/types/repository";
 import type { User } from "@/db/schema";
-import { utcDayClamped } from "@/services/dates";
+import { firstOfNextMonth } from "@/services/dates";
 
 export interface BalanceSummary {
   base: number;
@@ -10,10 +10,6 @@ export interface BalanceSummary {
   toReceive: number;
   toPay: number;
   projected: number;
-}
-
-function firstOfNextMonth(today: Date): Date {
-  return utcDayClamped(today.getUTCFullYear(), today.getUTCMonth() + 1, 1);
 }
 
 export class BalanceService {
