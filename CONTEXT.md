@@ -23,6 +23,16 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   sentinela de "desde a época" (isso somava o histórico inteiro contra uma base fictícia de R$ 0).
   Os handlers tratam o `null`: `/saldo` pede para definir; o rodapé do `/status` vira uma dica.
 
+## Painel do mês (/status e /pendentes)
+
+- **Conjunto do mês** — tanto o `/status` ("Situação do mês") quanto o `/pendentes` operam sobre
+  o mesmo recorte: **atrasados** (`dueDate < today`, de qualquer mês — dívida ainda aberta) ∪
+  **a vencer neste mês** (`today ≤ dueDate < firstOfNextMonth(today)`). Obrigações de meses
+  futuros **não aparecem** em nenhum dos dois — surgem quando o mês delas chega. A fronteira de
+  fim de mês é a **mesma** que o `balance.summarize` usa em `toPay`, então "Total em aberto" do
+  `/status` bate com "A pagar no mês" do rodapé de saldo. Um só helper (`scopeToMonth`) define o
+  recorte; `firstOfNextMonth` mora em `dates.ts`. Ver [[ADR-002]].
+
 ## Resposta (BotReply)
 
 - **BotReply** — o valor de domínio que representa o que o Gaston responde: `{ text: string;

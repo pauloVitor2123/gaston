@@ -713,6 +713,18 @@ describe("MessageHandler — commands & robustness", () => {
     expect(reply.text).toContain("10/08");
   });
 
+  it("scopes /pendentes to the current month, excluding future-month payables", async () => {
+    const payment = makePaymentService();
+    (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { type: "transaction", id: 1, description: "conta de luz", amountCents: 18000, dueDate: new Date(Date.UTC(2026, 7, 10)) },
+      { type: "transaction", id: 2, description: "aluguel de outubro", amountCents: 999999, dueDate: new Date(Date.UTC(2026, 9, 10)) },
+    ]);
+    const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
+    const reply = await handler.handle(100, "/pendentes", "Test User");
+    expect(reply.text).toContain("conta de luz");
+    expect(reply.text).not.toContain("aluguel de outubro");
+  });
+
   it("shows a friendly message on /pendentes when nothing is open", async () => {
     const payment = makePaymentService();
     (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -721,11 +733,12 @@ describe("MessageHandler — commands & robustness", () => {
     expect(reply.text.toLowerCase()).toContain("nada");
   });
 
-  it("splits payables into overdue and upcoming on /status", async () => {
+  it("scopes /status to the current month: overdue (any month) + upcoming this month, excluding future months", async () => {
     const payment = makePaymentService();
     (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { type: "transaction", id: 1, description: "conta velha", amountCents: 5000, dueDate: new Date("2020-01-10") },
-      { type: "transaction", id: 2, description: "boleto futuro", amountCents: 30000, dueDate: new Date("2099-12-15") },
+      { type: "transaction", id: 1, description: "conta velha", amountCents: 5000, dueDate: new Date(Date.UTC(2026, 6, 30)) },
+      { type: "transaction", id: 2, description: "boleto do mês", amountCents: 30000, dueDate: new Date(Date.UTC(2026, 7, 20)) },
+      { type: "transaction", id: 3, description: "aluguel de outubro", amountCents: 999999, dueDate: new Date(Date.UTC(2026, 9, 10)) },
     ]);
     const { handler, agent } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
     const reply = await handler.handle(100, "/status", "Test User");
@@ -733,7 +746,8 @@ describe("MessageHandler — commands & robustness", () => {
     expect(reply.text).toContain("Atrasados");
     expect(reply.text).toContain("conta velha");
     expect(reply.text).toContain("A vencer");
-    expect(reply.text).toContain("boleto futuro");
+    expect(reply.text).toContain("boleto do mês");
+    expect(reply.text).not.toContain("aluguel de outubro");
     expect(reply.text).toContain("Total em aberto: R$ 350,00");
   });
 
@@ -743,6 +757,18 @@ describe("MessageHandler — commands & robustness", () => {
     const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
     const reply = await handler.handle(100, "/status", "Test User");
     expect(reply.text).toContain("em dia");
+  });
+
+  it("shows the month all-clear on /status when only future-month payables exist", async () => {
+    const payment = makePaymentService();
+    (payment.listPayables as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { type: "transaction", id: 3, description: "aluguel de outubro", amountCents: 999999, dueDate: new Date(Date.UTC(2026, 9, 10)) },
+    ]);
+    const { handler } = makeHandler({ kind: "draft", draft: fullDraft }, {}, payment);
+    const reply = await handler.handle(100, "/status", "Test User");
+    expect(reply.text).toContain("em dia neste mês");
+    expect(reply.text).not.toContain("aluguel de outubro");
+    expect(reply.text).not.toContain("Total em aberto");
   });
 
   it("lists working commands and NL examples on /help without invoking the agent", async () => {
