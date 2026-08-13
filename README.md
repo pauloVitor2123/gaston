@@ -1,6 +1,6 @@
 # Finanças do PV
 
-<img width="320" height="320" alt="avatar_gaston" src="https://github.com/user-attachments/assets/9e0c7cf2-01d4-4738-8105-c265ad302061" />
+<img width="250" height="250" alt="avatar_gaston" src="https://github.com/user-attachments/assets/9e0c7cf2-01d4-4738-8105-c265ad302061" />
 
 
 Assistente financeiro conversacional para uso diário, via Telegram. Em vez de abrir planilhas ou apps complexos, você registra gastos em linguagem natural e recebe respostas inteligentes sobre saldo, categorias, contas fixas, boletos e compras parceladas.
