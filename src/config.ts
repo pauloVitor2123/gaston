@@ -10,6 +10,7 @@ export interface LLMEnv {
   OPENAI_API_KEY: string;
   COLLECTION_MODEL: string;
   COLLECTION_FALLBACK_MODEL: string;
+  DASHBOARD_SECRET: string;
 }
 
 export interface LLMConfigs {

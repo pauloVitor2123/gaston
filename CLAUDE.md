@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Finanças do PV** is a conversational financial assistant for Telegram that interprets natural language messages about expenses and automatically categorizes, assigns to payment methods, and tracks them. The MVP targets a single user (~10 users max) with near-zero infrastructure cost.
+**Finanças do PV** (Gaston) is a **simple expense registrar** for Telegram: the user writes an expense in natural language and the bot extracts value + description, assigns a category (and a mantra), and records it. Single user, near-zero infrastructure cost.
 
-Core value: instead of filling forms or opening spreadsheets, users write freely ("comprei uma máquina de lavar, 3668 em 5x no nubank") and the bot handles extraction, categorization, installment scheduling, and confirmation.
+Core value: instead of forms or spreadsheets, the user writes freely ("gastei 20 na padaria", "uber 10") and the bot records it, then reports where the money went (`/status` and an HTML `/dashboard`).
+
+> **Scope note (2026-08-17 simplification):** the app was deliberately cut back to a pure expense registrar. **No credit card, no invoices, no installments, no recurring bills, no payments/undo, no balance, no income.** Those features are not deleted — they are **parked in `src/_parked/`** (excluded from `tsconfig` and `vitest`), ready to revive. Do not wire parked code back into the live path without an explicit decision. The Drizzle schema is kept whole; the extra tables/columns are simply dormant (no migration was run).
 
 ## Architecture & Stack
 
@@ -19,9 +21,9 @@ Core value: instead of filling forms or opening spreadsheets, users write freely
 
 **LLM Stack** (pivoted — see [`docs/pivot-coleta-llm.md`](./docs/pivot-coleta-llm.md))
 
-- **A multi-tool AI agent**, not a state machine: a single `CollectionAgent` drives the conversation via native **tool/function-calling**. The LLM either calls `record_transaction` (record a lançamento), `mark_paid` (settle a pending target), or `undo_payment` (reverse a payment) — or replies with a text question. `zod` is the single source of truth per tool — it derives the TS type (`z.infer`), the JSON schema for the tool (`z.toJSONSchema`), and runtime validation.
-- **Mutations are always code-confirmed** (see [`docs/mark-as-paid.md`](./docs/mark-as-paid.md)): for `mark_paid`/`undo_payment` the LLM only picks a `target_id`/`event_id` from a list the code injects into context; the handler then runs a deterministic `sim/não` confirmation turn before touching the DB. Payments are a `payment_events` ledger (soft-void) so any payment — including partial invoice payments — can be undone.
+- **A small AI agent**, not a state machine: a single `CollectionAgent` drives the conversation via native **tool/function-calling** with exactly **two tools**: `record_transaction` (record an expense) and `query_spending` (report totals over a period) — otherwise it replies with a text question. `zod` is the single source of truth per tool — it derives the TS type (`z.infer`), the JSON schema for the tool (`z.toJSONSchema`), and runtime validation.
 - **Principle: LLM proposes, code disposes.** The model does the "soft" part (interpret free text, decide what's missing, ask); code owns validation and persistence. The final decision to write to the DB is never delegated to the LLM.
+- **Parked (stand-by, in `src/_parked/`):** `mark_paid`/`undo_payment` (payments ledger), `record_recurring_bill`/`delete_recurring_bill`, `record_installment_purchase`, `set_balance`, and their code-confirmed `sim/não` flow. Not part of the current scope.
 - **Model**: `gpt-4o-mini` (OpenAI, burns paused credits) with `anthropic/claude-3.5-haiku` (OpenRouter) as fallback via `OpenAICompatibleClient` + `LLMProvider`. The `:free` llama model is retired; LLM1/LLM2 are fused into one collection flow.
 - **Strategy**: consume paused credits (OpenAI, OpenRouter) before spending new money.
 
@@ -61,19 +63,20 @@ All tables are multi-tenant by `user_id` (design for 100+ users from day 1).
 ```
 User message (+ prior draft thread, if any)
   ↓
-CollectionAgent → LLM with record_transaction tool (zod-derived JSON schema):
-  • tool call  → validated by zod (value + description required)
-  • text reply → a clarifying question (required field still missing)
+CollectionAgent → LLM with record_transaction + query_spending tools (zod-derived JSON schema):
+  • record_transaction → validated by zod (value + description required)
+  • query_spending     → aggregate over a period (by category / mantra / total)
+  • text reply         → a clarifying question (required field still missing)
   ↓
-On tool call, code disposes (deterministic):
-  • date defaults to today; payment_method defaults to cash
-  • card cited matched against DB names — unknown card → cash + warning
+On record_transaction, code disposes (deterministic):
+  • date defaults to today
+  • category resolved from the DB list; unresolved + list non-empty → ask which category
   • mantra inferred by rule (~95% covered)
   ↓
 On question: save/refresh draft in pending_conversations (TTL 24h), reply the question.
   Cycle cap (3) never aborts — it pauses and keeps the draft alive for the next message.
   ↓
-Persist + 1-line confirmation
+Persist a settled expense + 1-line confirmation
 ```
 
 **Mantra inference rules** (applied in code after the tool call):
@@ -81,19 +84,19 @@ Persist + 1-line confirmation
 - "TotalPass, academia, terapia" → Se Pagar
 - default → Pagas as Contas
 
-**Scope**: lançamentos (record_expense/income) + mark-as-paid/undo (`mark_paid`/`undo_payment`). Installments, recurring bills, and queries (balance panels) come later.
+**Scope**: record an expense (`record_transaction`) + query spending (`query_spending`) + `/status` + `/dashboard`. Everything else is parked (see scope note above).
 
 ## Commands (Portuguese UI, English code)
 
 ```
-<free text>            → LLM pipeline (record entry/exit/installment/billing, mark paid, query)
-/status                → month panel: forecast vs. actual by category, by mantra, open invoices
-/fatura [card]         → open invoice: partial total, items, closing date, due date, % of limit
-/pendentes             → unpaid bills this month, sorted by due date
-/cartao add|edit|del|list
-/categoria add|edit|del|list
-/desfazer              → cancel last transaction
+<free text>            → record an expense, or ask a spending question
+/status                → current civil-month spending total + breakdown by category
+/dashboard             → personal signed HTML URL: charts by category & mantra, filter by month/day/range
+/cancelar              → abandon an in-progress draft
+/help                  → help
 ```
+
+**`/dashboard`** is served by the Worker itself: `GET /dashboard?u=&t=` returns a self-contained HTML page (Chart.js via CDN) that fetches `GET /api/report?u=&t=&from=&to=&group_by=`. The token is an HMAC-SHA256 of the user id signed with the `DASHBOARD_SECRET` secret; the origin is derived from the incoming webhook request. Code in `src/services/dashboard/` (`token.ts`, `page.ts`, `handler.ts`).
 
 ## Roadmap (4-week MVP)
 
@@ -110,6 +113,8 @@ Persist + 1-line confirmation
 - **Database access**: **Drizzle ORM** (decided). `src/db/schema.ts` is the single source of truth; `drizzle-kit generate` produces migrations; seeds live in `src/db/seeds.sql` (applied via `wrangler d1 execute --file`).
 - **Pending conversation state**: **`expires_at` on read** (decided) — no Cron cleanup.
 - **LLM stack**: `OpenAICompatibleClient` exposes `callWithTools` (native tool-calling); `LLMProvider` chains primary → fallback. Model IDs in `wrangler.jsonc` `vars` (`COLLECTION_MODEL` = `gpt-4o-mini` on OpenAI, `COLLECTION_FALLBACK_MODEL` = `anthropic/claude-3.5-haiku` on OpenRouter); API keys via `wrangler secret put` (never in git/GitHub). `CreditsExhaustedError` when all fail. Collection schema/agent live in `src/services/collection/` (`draft.ts` zod schema + tool, `collection-agent.ts`, `prompts.ts`).
+- **Secrets**: `DASHBOARD_SECRET` (via `wrangler secret put DASHBOARD_SECRET`) signs the `/dashboard` link token. Tests inject it as a miniflare binding in `vitest.config.ts`.
+- **Stand-by convention**: unused features live under `src/_parked/` (mirrors `src/` structure), excluded from `tsconfig.json` and `vitest.config.ts` (`test.exclude`). They are not compiled, bundled, or tested. To revive one, move it back and re-wire the composition root.
 - **Architecture**: constructor injection; specific repositories (service coordinates multi-repo); tests colocated (`x.ts` + `x.test.ts`).
 - **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
 - **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`

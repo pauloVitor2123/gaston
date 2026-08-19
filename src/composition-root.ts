@@ -6,23 +6,14 @@ import { LLMProvider } from "@/services/llm/llm-provider";
 import { CollectionAgent } from "@/services/collection/collection-agent";
 import { SystemClock } from "@/services/clock";
 import { TransactionService } from "@/services/transaction/transaction.service";
-import { PaymentService } from "@/services/payment/payment.service";
-import { RecurringBillService } from "@/services/recurring/recurring-bill.service";
-import { InstallmentService } from "@/services/installment/installment.service";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
-import { BalanceService } from "@/services/balance/balance.service";
-import { BalanceRepository } from "@/repositories/balance.repository";
-import { PaymentEventRepository } from "@/repositories/payment-event.repository";
-import { RecurringBillRepository } from "@/repositories/recurring-bill.repository";
-import { InstallmentPurchaseRepository } from "@/repositories/installment-purchase.repository";
+import { DashboardLink } from "@/services/dashboard/token";
 import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
 import { CategoryRepository } from "@/repositories/category.repository";
-import { CardRepository } from "@/repositories/card.repository";
 import { MantraRepository } from "@/repositories/mantra.repository";
 import { TransactionRepository } from "@/repositories/transaction.repository";
 import { SpendingRepository } from "@/repositories/spending.repository";
-import { CardInvoiceRepository } from "@/repositories/card-invoice.repository";
 import { PendingConversationRepository } from "@/repositories/pending-conversation.repository";
 
 const noopMetrics = { logAttempt: () => {} };
@@ -43,57 +34,21 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
 
   const userRepo = new UserRepository(db);
   const categoryRepo = new CategoryRepository(db);
-  const cardRepo = new CardRepository(db);
   const mantraRepo = new MantraRepository(db);
   const transactionRepo = new TransactionRepository(db);
-  const cardInvoiceRepo = new CardInvoiceRepository(db);
-  const recurringBillRepo = new RecurringBillRepository(db);
 
   const agent = new CollectionAgent(llm);
-  const transactionService = new TransactionService(
-    categoryRepo,
-    cardRepo,
-    mantraRepo,
-    transactionRepo,
-    cardInvoiceRepo,
-    clock,
-  );
-  const paymentService = new PaymentService(
-    transactionRepo,
-    cardInvoiceRepo,
-    new PaymentEventRepository(db),
-    recurringBillRepo,
-    clock,
-  );
-  const recurringService = new RecurringBillService(
-    categoryRepo,
-    mantraRepo,
-    recurringBillRepo,
-    transactionRepo,
-  );
-  const installmentService = new InstallmentService(
-    categoryRepo,
-    cardRepo,
-    mantraRepo,
-    new InstallmentPurchaseRepository(db),
-    transactionRepo,
-    cardInvoiceRepo,
-  );
+  const transactionService = new TransactionService(categoryRepo, mantraRepo, transactionRepo, clock);
   const analyticsService = new AnalyticsService(new SpendingRepository(db));
-  const balanceService = new BalanceService(new BalanceRepository(db), paymentService, userRepo);
 
   return new MessageHandler(
     userRepo,
     categoryRepo,
-    cardRepo,
     agent,
     transactionService,
-    paymentService,
-    recurringService,
-    installmentService,
-    new PendingConversationRepository(db),
     analyticsService,
-    balanceService,
+    new PendingConversationRepository(db),
+    new DashboardLink(env.DASHBOARD_SECRET, clock),
     clock,
   );
 }

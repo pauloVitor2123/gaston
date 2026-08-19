@@ -33,6 +33,10 @@ export function addMonthsUtc(date: Date, months: number): Date {
   return utcDayClamped(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate());
 }
 
+export function firstOfMonth(today: Date): Date {
+  return utcDayClamped(today.getUTCFullYear(), today.getUTCMonth(), 1);
+}
+
 export function firstOfNextMonth(today: Date): Date {
   return utcDayClamped(today.getUTCFullYear(), today.getUTCMonth() + 1, 1);
 }

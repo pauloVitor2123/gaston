@@ -6,6 +6,7 @@ const env: LLMEnv = {
   OPENAI_API_KEY: "oai-key",
   COLLECTION_MODEL: "gpt-4o-mini",
   COLLECTION_FALLBACK_MODEL: "anthropic/claude-3.5-haiku",
+  DASHBOARD_SECRET: "dash-secret",
 };
 
 describe("buildLLMConfigs", () => {

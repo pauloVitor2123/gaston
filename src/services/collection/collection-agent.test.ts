@@ -5,15 +5,7 @@ import type { AgentContext } from "@/services/collection/prompts";
 
 const context: AgentContext = {
   categories: ["Alimentação"],
-  cards: ["Nubank"],
   today: "2026-07-31",
-  payables: [
-    { type: "transaction", id: 55, description: "conta de luz", amountCents: 18000, dueDate: new Date("2026-08-10") },
-  ],
-  recentPayments: [
-    { eventId: 900, description: "conta de luz", amountCents: 18000, paidAt: new Date("2026-07-30") },
-  ],
-  recurringBills: [],
 };
 
 function agentReturning(result: ToolCallResult) {
@@ -26,7 +18,7 @@ describe("CollectionAgent.run", () => {
     const { agent } = agentReturning({
       toolCall: {
         name: "record_transaction",
-        arguments: { intent: "record_expense", description: "almoço", amount_cents: 3500 },
+        arguments: { description: "almoço", amount_cents: 3500 },
       },
     });
 
@@ -34,7 +26,7 @@ describe("CollectionAgent.run", () => {
 
     expect(turn).toEqual({
       kind: "draft",
-      draft: { intent: "record_expense", description: "almoço", amount_cents: 3500 },
+      draft: { description: "almoço", amount_cents: 3500 },
     });
   });
 
@@ -48,32 +40,12 @@ describe("CollectionAgent.run", () => {
 
   it("falls back to a question when the tool call is invalid (missing required field)", async () => {
     const { agent } = agentReturning({
-      toolCall: { name: "record_transaction", arguments: { intent: "record_expense", description: "x" } },
+      toolCall: { name: "record_transaction", arguments: { description: "x" } },
     });
 
     const turn = await agent.run([{ role: "user", content: "comprei algo" }], context);
 
     expect(turn.kind).toBe("question");
-  });
-
-  it("returns a pay turn when the model calls mark_paid", async () => {
-    const { agent } = agentReturning({
-      toolCall: { name: "mark_paid", arguments: { target_type: "transaction", target_id: 55, amount_cents: 21000 } },
-    });
-
-    const turn = await agent.run([{ role: "user", content: "paguei 210 da luz" }], context);
-
-    expect(turn).toEqual({ kind: "pay", target: { type: "transaction", id: 55 }, amountCents: 21000 });
-  });
-
-  it("returns an undo turn when the model calls undo_payment", async () => {
-    const { agent } = agentReturning({
-      toolCall: { name: "undo_payment", arguments: { event_id: 900 } },
-    });
-
-    const turn = await agent.run([{ role: "user", content: "desfaz o pagamento da luz" }], context);
-
-    expect(turn).toEqual({ kind: "undo", eventId: 900 });
   });
 
   it("returns a query turn when the model calls query_spending", async () => {
@@ -92,25 +64,17 @@ describe("CollectionAgent.run", () => {
     });
   });
 
-  it("returns a set_balance turn when the model calls set_balance", async () => {
-    const { agent } = agentReturning({
-      toolCall: { name: "set_balance", arguments: { amount_cents: 500000 } },
-    });
-
-    const turn = await agent.run([{ role: "user", content: "tenho 5000 na conta" }], context);
-
-    expect(turn).toEqual({ kind: "set_balance", amountCents: 500000 });
-  });
-
-  it("passes the system prompt and tool definition to the client", async () => {
+  it("passes the system prompt and tool definitions to the client", async () => {
     const { agent, llm } = agentReturning({ content: "?" });
 
     await agent.run([{ role: "user", content: "oi" }], context);
 
     const [messages, tools, system] = (llm.callWithTools as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(messages).toEqual([{ role: "user", content: "oi" }]);
-    expect(tools[0].name).toBe("record_transaction");
+    expect(tools.map((t: { name: string }) => t.name)).toEqual([
+      "record_transaction",
+      "query_spending",
+    ]);
     expect(system).toContain("Alimentação");
-    expect(system).toContain("Nubank");
   });
 });
