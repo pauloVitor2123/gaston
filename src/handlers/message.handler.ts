@@ -38,7 +38,7 @@ const ONBOARDING =
   "\n\nMande /help pra ver tudo que eu faço.";
 
 const HELP =
-  "🤖 Gaston — o que eu faço\n\n" +
+  "🐷 Gaston — o que eu faço\n\n" +
   "É só me escrever seus gastos naturalmente:\n" +
   EXAMPLES +
   "\n\nComandos:\n" +
