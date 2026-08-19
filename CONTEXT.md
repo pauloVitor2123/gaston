@@ -56,6 +56,21 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   servidor as compara contra `dueDate` (meia-noite UTC), inclusivas nas duas pontas (o
   `AnalyticsService` soma +1 dia ao `to`).
 
+## Coleta (Collection)
+
+- **Gasto avulso** — um gasto informado **só com valor**, sem nenhum contexto do que foi
+  ("gastei 50"). O modelo registra na hora com `description = "gasto avulso"`
+  (`PLACEHOLDER_DESCRIPTION` em `draft.ts`) em vez de perguntar. A string é a **sentinela
+  compartilhada** entre prompt e código: o `MessageHandler` a reconhece (normalizada:
+  trim + lowercase) e, em vez de disparar a pergunta de categoria, resolve a categoria
+  fallback **Outros** e persiste — zero perguntas. É o contraponto do gasto com contexto
+  ("padaria"), que resolve/pergunta categoria normalmente.
+- **O que o Gaston nunca pergunta** — só o **valor** justifica uma pergunta em texto.
+  **Data** nunca é perguntada (o código assume o [[User's Today (data civil do usuário)]]
+  quando ausente); **descrição** nunca é perguntada (vira *gasto avulso*); **categoria** é
+  perguntada pelo **código** (não pelo modelo) quando um gasto com contexto real não resolve
+  numa categoria existente.
+
 ## Resposta (BotReply)
 
 - **BotReply** — o valor de domínio que representa o que o Gaston responde: `{ text: string;

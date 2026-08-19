@@ -5,7 +5,7 @@ import type {
   IUserRepository,
 } from "@/types/repository";
 import type { AgentTurn, CollectionAgent } from "@/services/collection/collection-agent";
-import type { TransactionDraft } from "@/services/collection/draft";
+import { PLACEHOLDER_DESCRIPTION, type TransactionDraft } from "@/services/collection/draft";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { AnalyticsService, SpendingReport } from "@/services/analytics/analytics.service";
 import type { Category, PendingConversation, Transaction, User } from "@/db/schema";
@@ -28,6 +28,7 @@ const mockUser: User = {
 
 const mockCategories: Category[] = [
   { id: 1, userId: 1, name: "Alimentação", synonyms: [] } as Category,
+  { id: 2, userId: 1, name: "Outros", synonyms: [] } as Category,
 ];
 
 const mockTransaction = { id: 99, userId: 1 } as Transaction;
@@ -139,6 +140,39 @@ describe("MessageHandler — record flow", () => {
     expect(repos.pendingRepo.create).toHaveBeenCalledOnce();
     expect(reply.text).toContain("Em qual categoria");
     expect(reply.text).toContain("Alimentação");
+  });
+
+  it("records a value-only expense under Outros without asking", async () => {
+    const { handler, repos, transactionService } = makeHandler({
+      kind: "draft",
+      draft: { description: PLACEHOLDER_DESCRIPTION, amount_cents: 5000 },
+    });
+
+    const reply = await handler.handle(100, "gastei 50", "Test", ORIGIN);
+
+    expect(repos.pendingRepo.create).not.toHaveBeenCalled();
+    expect(transactionService.persist).toHaveBeenCalledOnce();
+    const [input] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input).toMatchObject({
+      description: PLACEHOLDER_DESCRIPTION,
+      amount_cents: 5000,
+      category_name: "Outros",
+    });
+    expect(reply.text).toContain("📁 Outros");
+  });
+
+  it("treats a capitalized/padded placeholder as value-only", async () => {
+    const { handler, repos, transactionService } = makeHandler({
+      kind: "draft",
+      draft: { description: "  Gasto Avulso  ", amount_cents: 5000 },
+    });
+
+    const reply = await handler.handle(100, "gastei 50", "Test", ORIGIN);
+
+    expect(repos.pendingRepo.create).not.toHaveBeenCalled();
+    const [input] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input.category_name).toBe("Outros");
+    expect(reply.text).toContain("📁 Outros");
   });
 
   it("resolves the category from a follow-up message on the saved draft", async () => {
