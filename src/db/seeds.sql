@@ -11,8 +11,12 @@ INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Saúde',       '["farmácia","remédio","médico","consulta"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Lazer',       '["cinema","bar","streaming","jogo"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Educação',    '["curso","livro","faculdade"]'),
-  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Moradia',     '["aluguel","condomínio","luz","água","internet"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Moradia',     '["aluguel","condomínio","luz","água","internet","ferramenta","manutenção","reparo","trena"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Serviços',    '["assinatura","academia"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Vestuário',   '["roupa","meia","camisa","calça","tênis","sapato","calçado"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Cuidados Pessoais', '["barbearia","cabeleireiro","salão","cosméticos","higiene","perfume"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Presentes',   '["presente","lembrancinha","aniversário"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pet',         '["ração","veterinário","pet shop","petshop","tosa","cachorro","gato"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Outros',      '[]');
 
 INSERT OR IGNORE INTO mantras (user_id, name, target_percent) VALUES

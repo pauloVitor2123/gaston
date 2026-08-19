@@ -22,6 +22,18 @@ describe("applyMantraRules", () => {
     expect(applyMantraRules("sessão de terapia")).toBe("Se Pagar");
   });
 
+  it("returns 'Se Pagar' for barbearia", () => {
+    expect(applyMantraRules("corte na barbearia")).toBe("Se Pagar");
+  });
+
+  it("returns 'Se Pagar' for cabeleireiro", () => {
+    expect(applyMantraRules("cabeleireiro")).toBe("Se Pagar");
+  });
+
+  it("returns 'Se Pagar' for salão", () => {
+    expect(applyMantraRules("salão de beleza")).toBe("Se Pagar");
+  });
+
   it("returns 'Pagas as Contas' as default for unrecognized description", () => {
     expect(applyMantraRules("comprei pizza")).toBe("Pagas as Contas");
   });
