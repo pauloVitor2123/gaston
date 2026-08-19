@@ -20,11 +20,4 @@ export class UserRepository implements IUserRepository {
     if (!row) throw new Error("Falha ao criar usuário");
     return row;
   }
-
-  async setBalance(userId: number, balanceCents: number, at: Date): Promise<void> {
-    await this.db
-      .update(users)
-      .set({ balanceCents, balanceSetAt: at })
-      .where(eq(users.id, userId));
-  }
 }

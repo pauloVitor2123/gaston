@@ -32,7 +32,7 @@ async function setup(chatId: number) {
     userId: user.id,
     direction: "out",
     expectedAmountCents: 1000,
-    paymentMethod: "pix",
+    paymentMethod: "cash",
     categoryId: alimentacao.id,
     mantraId: mantra.id,
   };
@@ -66,12 +66,23 @@ describe("SpendingRepository", () => {
     await txRepo.create({ ...base, description: "cancelado", status: "cancelled", expectedAmountCents: 5000, accrualDate: inRange, dueDate: inRange });
     await txRepo.create({ ...base, description: "recebimento", direction: "in", expectedAmountCents: 70000, accrualDate: inRange, dueDate: inRange });
 
-    const rows = await repo.sumByCategory({ userId, direction: "out", ...AUG });
+    const rows = await repo.sumByCategory({ userId, ...AUG });
 
     const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
     expect(byLabel["Alimentação"]).toBe(45000);
     expect(byLabel["Transporte"]).toBe(32000);
     expect(rows).toHaveLength(2);
+  });
+
+  it("sumByMantra groups spending by mantra", async () => {
+    const { txRepo, repo, userId, base } = await setup(5005);
+    const d = new Date("2026-08-05");
+    await txRepo.create({ ...base, description: "a", expectedAmountCents: 1000, accrualDate: d, dueDate: d });
+    await txRepo.create({ ...base, description: "b", expectedAmountCents: 2500, accrualDate: d, dueDate: d });
+
+    const rows = await repo.sumByMantra({ userId, ...AUG });
+    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
+    expect(byLabel["Pagas as Contas"]).toBe(3500);
   });
 
   it("sumTotal returns the summed amount for the range", async () => {
@@ -80,23 +91,11 @@ describe("SpendingRepository", () => {
     await txRepo.create({ ...base, description: "a", expectedAmountCents: 1000, accrualDate: d, dueDate: d });
     await txRepo.create({ ...base, description: "b", expectedAmountCents: 2500, accrualDate: d, dueDate: d });
 
-    expect(await repo.sumTotal({ userId, direction: "out", ...AUG })).toBe(3500);
+    expect(await repo.sumTotal({ userId, ...AUG })).toBe(3500);
   });
 
   it("sumTotal returns 0 when nothing matches the range", async () => {
     const { repo, userId } = await setup(5003);
-    expect(await repo.sumTotal({ userId, direction: "out", ...AUG })).toBe(0);
-  });
-
-  it("sumByPaymentMethod groups by payment method", async () => {
-    const { txRepo, repo, userId, base } = await setup(5004);
-    const d = new Date("2026-08-05");
-    await txRepo.create({ ...base, description: "pix1", paymentMethod: "pix", expectedAmountCents: 1000, accrualDate: d, dueDate: d });
-    await txRepo.create({ ...base, description: "debito", paymentMethod: "debit", expectedAmountCents: 4000, accrualDate: d, dueDate: d });
-
-    const rows = await repo.sumByPaymentMethod({ userId, direction: "out", ...AUG });
-    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
-    expect(byLabel["pix"]).toBe(1000);
-    expect(byLabel["debit"]).toBe(4000);
+    expect(await repo.sumTotal({ userId, ...AUG })).toBe(0);
   });
 });

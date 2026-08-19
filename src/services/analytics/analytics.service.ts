@@ -15,8 +15,6 @@ export interface SpendingReport {
 const UNLABELED: Record<SpendingGroupBy, string> = {
   category: "Sem categoria",
   mantra: "Sem mantra",
-  card: "Sem cartão",
-  payment_method: "Sem método",
   none: "Total",
 };
 
@@ -28,7 +26,6 @@ export class AnalyticsService {
       userId,
       from: parseUtcDate(params.from),
       to: addDaysUtc(parseUtcDate(params.to), 1),
-      direction: params.direction ?? "out",
     };
 
     const rows = await this.rowsFor(params.group_by, filter);
@@ -49,10 +46,6 @@ export class AnalyticsService {
         return this.spendingRepo.sumByCategory(filter);
       case "mantra":
         return this.spendingRepo.sumByMantra(filter);
-      case "card":
-        return this.spendingRepo.sumByCard(filter);
-      case "payment_method":
-        return this.spendingRepo.sumByPaymentMethod(filter);
     }
   }
 }

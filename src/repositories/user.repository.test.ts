@@ -17,18 +17,6 @@ describe("UserRepository", () => {
     expect(user.balanceCents).toBe(0);
   });
 
-  it("setBalance updates the balance and its timestamp", async () => {
-    const repo = makeRepo();
-    const user = await repo.create({ telegramChatId: 54321, name: "Ciclano" });
-    const at = new Date("2026-08-04T12:00:00Z");
-
-    await repo.setBalance(user.id, 500000, at);
-
-    const updated = await repo.findByChatId(54321);
-    expect(updated?.balanceCents).toBe(500000);
-    expect(updated?.balanceSetAt).toEqual(at);
-  });
-
   it("findByChatId returns existing user", async () => {
     const repo = makeRepo();
     await repo.create({ telegramChatId: 999, name: "Beltrano" });

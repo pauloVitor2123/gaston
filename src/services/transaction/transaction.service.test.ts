@@ -1,63 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
-  ICardInvoiceRepository,
-  ICardRepository,
   ICategoryRepository,
   IMantraRepository,
   ITransactionRepository,
 } from "@/types/repository";
 import { TransactionService, type TransactionInput } from "@/services/transaction/transaction.service";
 import { FixedClock } from "@/services/clock";
-import type { Card, CardInvoice, Category, Mantra, Transaction } from "@/db/schema";
+import type { Category, Mantra, Transaction } from "@/db/schema";
 
 const userId = 1;
 const NOW = new Date("2025-01-20T12:00:00.000Z");
 const TODAY = new Date(Date.UTC(2025, 0, 20));
 
 const mockCategory = { id: 10, userId, name: "Alimentação", synonyms: [] } as Category;
-const mockCard = {
-  id: 20,
-  userId,
-  name: "Nubank",
-  aliases: [],
-  brand: "Mastercard",
-  closingDay: 13,
-  dueDay: 20,
-  limitCents: null,
-  isActive: true,
-  createdAt: new Date(),
-} as Card;
 const mockMantra = { id: 30, userId, name: "Pagas as Contas", targetPercent: 0.45 } as Mantra;
-const mockInvoice = {
-  id: 40,
-  userId,
-  cardId: 20,
-  cycleStart: new Date("2025-01-14"),
-  cycleEnd: new Date("2025-02-13"),
-  dueDate: new Date("2025-02-20"),
-  status: "open",
-  paidAmountCents: null,
-  paidAt: null,
-} as CardInvoice;
 const mockTransaction = { id: 1, userId } as Transaction;
 
-const baseResult: TransactionInput = {
+const baseInput: TransactionInput = {
   description: "almoço",
   amount_cents: 3500,
   date: "2025-01-15",
-  payment_method: "card",
-  card_name: "Nubank",
   category_name: "Alimentação",
-  direction: "out",
   mantra: "Pagas as Contas",
 };
 
 function makeRepos(
   overrides: Partial<{
     findByNameOrSynonym: () => Promise<Category | null>;
-    findByNameOrAlias: () => Promise<Card | null>;
     findByName: () => Promise<Mantra | null>;
-    findOrCreate: () => Promise<CardInvoice>;
     create: () => Promise<Transaction>;
   }> = {},
 ) {
@@ -65,13 +35,10 @@ function makeRepos(
     categoryRepo: {
       create: vi.fn(),
       listByUser: vi.fn(),
-      findByNameOrSynonym: vi.fn().mockImplementation(overrides.findByNameOrSynonym ?? (() => Promise.resolve(mockCategory))),
+      findByNameOrSynonym: vi
+        .fn()
+        .mockImplementation(overrides.findByNameOrSynonym ?? (() => Promise.resolve(mockCategory))),
     } as unknown as ICategoryRepository,
-    cardRepo: {
-      create: vi.fn(),
-      listByUser: vi.fn(),
-      findByNameOrAlias: vi.fn().mockImplementation(overrides.findByNameOrAlias ?? (() => Promise.resolve(mockCard))),
-    } as unknown as ICardRepository,
     mantraRepo: {
       create: vi.fn(),
       listByUser: vi.fn(),
@@ -79,14 +46,7 @@ function makeRepos(
     } as unknown as IMantraRepository,
     transactionRepo: {
       create: vi.fn().mockImplementation(overrides.create ?? (() => Promise.resolve(mockTransaction))),
-      findLastByUser: vi.fn(),
-      findById: vi.fn(),
     } as unknown as ITransactionRepository,
-    cardInvoiceRepo: {
-      findOrCreate: vi.fn().mockImplementation(overrides.findOrCreate ?? (() => Promise.resolve(mockInvoice))),
-      update: vi.fn().mockResolvedValue(undefined),
-      listOpen: vi.fn(),
-    } as unknown as ICardInvoiceRepository,
   };
 }
 
@@ -94,152 +54,76 @@ function makeService(overrides = {}) {
   const repos = makeRepos(overrides);
   const service = new TransactionService(
     repos.categoryRepo,
-    repos.cardRepo,
     repos.mantraRepo,
     repos.transactionRepo,
-    repos.cardInvoiceRepo,
     new FixedClock(NOW),
   );
   return { service, repos };
 }
 
+function created(repos: ReturnType<typeof makeRepos>) {
+  return (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+}
+
 describe("TransactionService.persist", () => {
-  it("resolves category, card, and mantra by name", async () => {
+  it("resolves category and mantra by name", async () => {
     const { service, repos } = makeService();
-    await service.persist(baseResult, userId, "raw", TODAY);
+    await service.persist(baseInput, userId, "raw", TODAY);
 
     expect(repos.categoryRepo.findByNameOrSynonym).toHaveBeenCalledWith(userId, "Alimentação");
-    expect(repos.cardRepo.findByNameOrAlias).toHaveBeenCalledWith(userId, "Nubank");
     expect(repos.mantraRepo.findByName).toHaveBeenCalledWith(userId, "Pagas as Contas");
+    const row = created(repos);
+    expect(row.categoryId).toBe(10);
+    expect(row.mantraId).toBe(30);
   });
 
-  it("creates card invoice for card payment and passes computed due_date as dueDate", async () => {
+  it("records a settled cash expense with accrualDate = dueDate", async () => {
     const { service, repos } = makeService();
-    await service.persist(baseResult, userId, "raw", TODAY);
+    await service.persist(baseInput, userId, "raw", TODAY);
 
-    expect(repos.cardInvoiceRepo.findOrCreate).toHaveBeenCalledOnce();
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.cardInvoiceId).toBe(40);
-    // purchase Jan 15 > closingDay 13 → due date is month+2, day 20 = Mar 20
-    expect(created.dueDate).toEqual(new Date("2025-03-20"));
+    const row = created(repos);
+    expect(row.direction).toBe("out");
+    expect(row.status).toBe("settled");
+    expect(row.paymentMethod).toBe("cash");
+    expect(row.settledAt).toEqual(NOW);
+    expect(row.actualAmountCents).toBe(3500);
+    expect(row.accrualDate).toEqual(new Date(Date.UTC(2025, 0, 15)));
+    expect(row.dueDate).toEqual(new Date(Date.UTC(2025, 0, 15)));
   });
 
-  it("reopens a paid invoice when a backdated card charge lands in its cycle (BUG-2)", async () => {
-    const { service, repos } = makeService({
-      findOrCreate: () => Promise.resolve({ ...mockInvoice, status: "paid", paidAt: new Date() }),
-    });
-    await service.persist(baseResult, userId, "raw", TODAY);
-
-    expect(repos.cardInvoiceRepo.update).toHaveBeenCalledWith(userId, 40, { status: "open", paidAt: null });
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.cardInvoiceId).toBe(40);
-    expect(created.status).toBe("pending");
-  });
-
-  it("skips card invoice for non-card payment", async () => {
+  it("defaults accrualDate to the injected today when date is absent", async () => {
     const { service, repos } = makeService();
-    const result: TransactionInput = { ...baseResult, payment_method: "pix", card_name: undefined };
-    await service.persist(result, userId, "raw", TODAY);
+    await service.persist({ ...baseInput, date: undefined }, userId, "raw", TODAY);
 
-    expect(repos.cardInvoiceRepo.findOrCreate).not.toHaveBeenCalled();
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.cardId).toBeUndefined();
-    expect(created.cardInvoiceId).toBeUndefined();
+    expect(created(repos).accrualDate).toEqual(TODAY);
   });
 
-  it("sets categoryId and mantraId to undefined when not found in DB", async () => {
+  it("leaves categoryId and mantraId undefined when not found", async () => {
     const { service, repos } = makeService({
       findByNameOrSynonym: () => Promise.resolve(null),
       findByName: () => Promise.resolve(null),
     });
-    await service.persist(baseResult, userId, "raw", TODAY);
+    await service.persist(baseInput, userId, "raw", TODAY);
 
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.categoryId).toBeUndefined();
-    expect(created.mantraId).toBeUndefined();
+    const row = created(repos);
+    expect(row.categoryId).toBeUndefined();
+    expect(row.mantraId).toBeUndefined();
   });
 
-  it("defaults paymentMethod to 'cash' when not provided", async () => {
+  it("leaves category lookup unused when no category_name is provided", async () => {
     const { service, repos } = makeService();
-    const result: TransactionInput = { ...baseResult, payment_method: undefined };
-    await service.persist(result, userId, "raw", TODAY);
+    await service.persist({ ...baseInput, category_name: undefined }, userId, "raw", TODAY);
 
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.paymentMethod).toBe("cash");
+    expect(repos.categoryRepo.findByNameOrSynonym).not.toHaveBeenCalled();
+    expect(created(repos).categoryId).toBeUndefined();
   });
 
-  it("defaults accrualDate to the injected today when result.date is absent", async () => {
+  it("stores rawMessage and source=user", async () => {
     const { service, repos } = makeService();
-    const result: TransactionInput = { ...baseResult, date: undefined, payment_method: "pix" };
-    await service.persist(result, userId, "raw", TODAY);
+    await service.persist(baseInput, userId, "almoço 35 padaria", TODAY);
 
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.accrualDate).toEqual(TODAY);
-  });
-
-  it("stores rawMessage and source=user in the transaction", async () => {
-    const { service, repos } = makeService();
-    await service.persist(baseResult, userId, "almoço 35 reais nubank", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.rawMessage).toBe("almoço 35 reais nubank");
-    expect(created.source).toBe("user");
-    expect(created.status).toBe("pending");
-  });
-});
-
-describe("TransactionService.persist — settled vs pending", () => {
-  const cashPast: TransactionInput = {
-    ...baseResult,
-    payment_method: "pix",
-    card_name: undefined,
-    date: "2025-01-15",
-  };
-
-  it("settles a cash/pix expense that already happened", async () => {
-    const { service, repos } = makeService();
-    await service.persist(cashPast, userId, "raw", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.status).toBe("settled");
-    expect(created.settledAt).toEqual(NOW);
-    expect(created.actualAmountCents).toBe(3500);
-  });
-
-  it("keeps a future obligation pending and uses due_date as dueDate", async () => {
-    const { service, repos } = makeService();
-    const result: TransactionInput = { ...cashPast, due_date: "2099-12-31", already_paid: false };
-    await service.persist(result, userId, "raw", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.status).toBe("pending");
-    expect(created.dueDate).toEqual(new Date(Date.UTC(2099, 11, 31)));
-    expect(created.settledAt ?? null).toBeNull();
-  });
-
-  it("keeps a bill due tomorrow pending against the injected today (no midnight drift)", async () => {
-    const { service, repos } = makeService();
-    const result: TransactionInput = { ...cashPast, date: undefined, due_date: "2025-01-21" };
-    await service.persist(result, userId, "raw", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.status).toBe("pending");
-  });
-
-  it("settles when already_paid is true even with a future due_date", async () => {
-    const { service, repos } = makeService();
-    const result: TransactionInput = { ...cashPast, due_date: "2099-12-31", already_paid: true };
-    await service.persist(result, userId, "raw", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.status).toBe("settled");
-  });
-
-  it("stays pending for a card purchase regardless of already_paid", async () => {
-    const { service, repos } = makeService();
-    await service.persist({ ...baseResult, already_paid: true }, userId, "raw", TODAY);
-
-    const created = (repos.transactionRepo.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(created.status).toBe("pending");
+    const row = created(repos);
+    expect(row.rawMessage).toBe("almoço 35 padaria");
+    expect(row.source).toBe("user");
   });
 });

@@ -33,6 +33,29 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   `/status` bate com "A pagar no mês" do rodapé de saldo. Um só helper (`scopeToMonth`) define o
   recorte; `firstOfNextMonth` mora em `dates.ts`. Ver [[ADR-002]].
 
+## Painel (Dashboard link)
+
+- **Link assinado do painel** — o `/dashboard` no chat devolve uma URL
+  `{origin}/dashboard?u={userId}&t={token}`. O `token` é **stateless** e **expira em 24h**:
+  `t = "{exp}.{hmac}"`, onde `exp` é o epoch-ms de validade e `hmac = HMAC-SHA256(secret,
+  "{userId}.{exp}")` (hex). `verifyToken` recusa se `exp ≤ now` (expirado) ou se a assinatura
+  não bate (adulterado/segredo errado), com comparação em tempo constante. `exp` viaja **dentro**
+  do token, então a URL mantém só `u` + `t`. Não há tabela de sessões nem revogação individual —
+  o link simplesmente vence; rodar `/dashboard` de novo emite outro (barato, single-user). O
+  `now` vem do [[Clock]] (`clock.now()`) tanto ao assinar (`DashboardLink.build`) quanto ao
+  verificar (rota em `index.ts` injeta `now` no handler). `DASHBOARD_SECRET` assina; trocá-lo
+  invalida todos os links de uma vez. Código em `src/services/dashboard/token.ts`.
+
+- **"Hoje" do painel é browser-local (fronteira deliberada)** — ao contrário do `/status`, que
+  ancora "hoje"/"este mês" no fuso do usuário via `clock.today(user.timezone)`, o painel calcula
+  os defaults de período no **cliente** (`new Date()` do browser). Escolha consciente: os
+  `<input type=date|month>` já são browser-locais, então misturar um "hoje" server-tz com pickers
+  locais confundiria mais. Consequência aceita: se o painel for aberto de um device em outro fuso,
+  o default "este mês"/"hoje" pode divergir do `/status` por até um dia. Para o único usuário
+  (quase sempre no fuso de casa) os dois batem. As datas escolhidas viajam como `YYYY-MM-DD` e o
+  servidor as compara contra `dueDate` (meia-noite UTC), inclusivas nas duas pontas (o
+  `AnalyticsService` soma +1 dia ao `to`).
+
 ## Resposta (BotReply)
 
 - **BotReply** — o valor de domínio que representa o que o Gaston responde: `{ text: string;
