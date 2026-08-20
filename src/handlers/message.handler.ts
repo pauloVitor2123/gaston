@@ -5,7 +5,7 @@ import type {
 } from "@/types/repository";
 import type { LLMMessage } from "@/types/llm";
 import type { CollectionAgent } from "@/services/collection/collection-agent";
-import type { TransactionDraft } from "@/services/collection/draft";
+import { PLACEHOLDER_DESCRIPTION, type TransactionDraft } from "@/services/collection/draft";
 import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
 import { firstOfMonth, parseUtcDate, toIsoDate } from "@/services/dates";
 import type { Clock } from "@/services/clock";
@@ -24,6 +24,7 @@ type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
+const FALLBACK_CATEGORY_NAME = "Outros";
 
 const EXAMPLES =
   '• "gastei 20 na padaria"\n' +
@@ -161,8 +162,11 @@ export class MessageHandler {
     });
 
     if (turn.kind === "draft") {
-      const category = resolveCategory(turn.draft.category_name, turn.draft.description, categories);
-      if (!category && categories.length > 0) {
+      const isPlaceholder = isPlaceholderDescription(turn.draft.description);
+      const category = isPlaceholder
+        ? findFallbackCategory(categories)
+        : resolveCategory(turn.draft.category_name, turn.draft.description, categories);
+      if (!isPlaceholder && !category && categories.length > 0) {
         const question = categoryQuestion(categories);
         const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
         return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
@@ -233,6 +237,14 @@ export class MessageHandler {
 
 function categoryQuestion(categories: Category[]): string {
   return `Em qual categoria isso entra? Escolha uma: ${categories.map((c) => c.name).join(", ")}.`;
+}
+
+function isPlaceholderDescription(description: string): boolean {
+  return description.trim().toLowerCase() === PLACEHOLDER_DESCRIPTION;
+}
+
+function findFallbackCategory(categories: Category[]): Category | null {
+  return categories.find((c) => c.name.toLowerCase() === FALLBACK_CATEGORY_NAME.toLowerCase()) ?? null;
 }
 
 function monthLabel(today: Date): string {
