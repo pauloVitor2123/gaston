@@ -157,7 +157,9 @@ describe("MessageHandler — record flow", () => {
       description: PLACEHOLDER_DESCRIPTION,
       amount_cents: 5000,
       category_name: "Outros",
+      mantra: "Pagas as Contas",
     });
+    expect(reply.text).toContain("Gasto avulso — R$ 50,00");
     expect(reply.text).toContain("📁 Outros");
   });
 
