@@ -24,6 +24,7 @@ export const RECORD_TRANSACTION_TOOL: ToolDefinition = {
   description:
     "Registra um gasto do usuário. " +
     "Chame assim que tiver o valor (amount_cents em centavos). " +
+    "Se o usuário relatar vários gastos numa mensagem, chame esta ferramenta uma vez por gasto. " +
     `Sem nenhum contexto do que foi (só o valor), use description exatamente "${PLACEHOLDER_DESCRIPTION}" e registre — não pergunte. ` +
     "category_name: escolha a categoria mais provável da lista quando der pra inferir com segurança; " +
     "se não der, deixe em branco (o usuário será perguntado). " +

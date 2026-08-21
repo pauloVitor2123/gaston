@@ -70,6 +70,21 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   quando ausente); **descrição** nunca é perguntada (vira *gasto avulso*); **categoria** é
   perguntada pelo **código** (não pelo modelo) quando um gasto com contexto real não resolve
   numa categoria existente.
+- **Lote de gastos (expense batch)** — uma única mensagem que produz **vários gastos** ("gastei
+  100 com gasolina e 50 com estacionamento ontem"). O LLM expressa como **N chamadas paralelas
+  de `record_transaction`** (não um array; a tool continua espelhando um-gasto). Regras do lote:
+  **gasto tem precedência** — se o turno mistura `record_transaction` com `query_spending`, o
+  agente colapsa para o lote de gastos e descarta a consulta (o usuário a refaz com `/status`).
+  **Lote nunca pergunta categoria** — item com contexto que não resolve cai em **Outros**
+  (mesmo destino do *gasto avulso*), ao contrário do gasto **único**, que ainda pergunta; a
+  pergunta seria ambígua entre os itens e brigaria com a pressa do despejo. **Best-effort por
+  item** — cada draft é validado e gravado independentemente (não é transação: gastos são
+  eventos independentes, sem invariante que os force a cair juntos); confirma exatamente o que
+  entrou e avisa o que falhou — nunca perda silenciosa. **Cap de 10** itens (grava os primeiros,
+  avisa o excedente). O *gasto avulso* segue aplicado **por-item** (valor solto no meio de
+  gastos descritos → Outros, sem pergunta). Um lote que grava tudo **limpa o pending** e não
+  cria ciclo; um draft anterior entra só como **contexto** na thread, sem modo especial. A
+  confirmação é **uma** mensagem consolidada (uma linha por gasto + total). Ver [[ADR-003]].
 
 ## Resposta (BotReply)
 

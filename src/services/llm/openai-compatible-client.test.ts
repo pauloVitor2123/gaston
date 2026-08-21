@@ -51,10 +51,12 @@ describe("OpenAICompatibleClient.callWithTools", () => {
       "seja um bot",
     );
 
-    expect(result.toolCall).toEqual({
-      name: "record_transaction",
-      arguments: { amount_cents: 3500, description: "almoço" },
-    });
+    expect(result.toolCalls).toEqual([
+      {
+        name: "record_transaction",
+        arguments: { amount_cents: 3500, description: "almoço" },
+      },
+    ]);
     const body = JSON.parse(fetchFn.mock.calls[0]![1]?.body as string) as {
       messages: unknown;
       tools: Array<{ type: string; function: { name: string } }>;
@@ -68,13 +70,36 @@ describe("OpenAICompatibleClient.callWithTools", () => {
     expect(body.tool_choice).toBe("auto");
   });
 
+  it("returns every tool call when the model emits several in one turn", async () => {
+    const multiBody = JSON.stringify({
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              { function: { name: "record_transaction", arguments: JSON.stringify({ amount_cents: 10000, description: "gasolina" }) } },
+              { function: { name: "record_transaction", arguments: JSON.stringify({ amount_cents: 5000, description: "estacionamento" }) } },
+            ],
+          },
+        },
+      ],
+    });
+    const client = new OpenAICompatibleClient(config, respondWith(200, multiBody));
+
+    const result = await client.callWithTools([{ role: "user", content: "gasolina 100 e estacionamento 50" }], [tool]);
+
+    expect(result.toolCalls).toEqual([
+      { name: "record_transaction", arguments: { amount_cents: 10000, description: "gasolina" } },
+      { name: "record_transaction", arguments: { amount_cents: 5000, description: "estacionamento" } },
+    ]);
+  });
+
   it("returns text content when the model asks a question instead of calling the tool", async () => {
     const client = new OpenAICompatibleClient(config, respondWith(200, textBody));
 
     const result = await client.callWithTools([{ role: "user", content: "gastei" }], [tool]);
 
     expect(result.content).toBe("Qual o valor?");
-    expect(result.toolCall).toBeUndefined();
+    expect(result.toolCalls).toBeUndefined();
   });
 
   it("throws LLMError when tool arguments are malformed JSON", async () => {

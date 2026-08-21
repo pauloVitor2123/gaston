@@ -46,9 +46,13 @@ export class OpenAICompatibleClient implements ILLMClient {
     };
 
     const message = await this.post(body);
-    const toolCall = message.tool_calls?.[0];
-    if (toolCall?.function?.name) {
-      return { toolCall: this.parseToolCall(toolCall.function.name, toolCall.function.arguments) };
+    const toolCalls = (message.tool_calls ?? [])
+      .filter((call): call is ResponseToolCall & { function: { name: string } } =>
+        Boolean(call.function?.name),
+      )
+      .map((call) => this.parseToolCall(call.function.name, call.function.arguments));
+    if (toolCalls.length > 0) {
+      return { toolCalls };
     }
     if (message.content) {
       return { content: message.content };

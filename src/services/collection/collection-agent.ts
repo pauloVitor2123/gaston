@@ -8,7 +8,7 @@ import {
 } from "@/services/analytics/query";
 
 export type AgentTurn =
-  | { kind: "draft"; draft: TransactionDraft }
+  | { kind: "drafts"; drafts: TransactionDraft[] }
   | { kind: "query"; params: QuerySpendingArgs }
   | { kind: "question"; text: string };
 
@@ -20,15 +20,18 @@ export class CollectionAgent {
 
   async run(messages: LLMMessage[], context: AgentContext): Promise<AgentTurn> {
     const system = buildCollectionSystemPrompt(context);
-    const { toolCall, content } = await this.llm.callWithTools(messages, TOOLS, system);
+    const { toolCalls, content } = await this.llm.callWithTools(messages, TOOLS, system);
+    const calls = toolCalls ?? [];
 
-    if (toolCall?.name === RECORD_TRANSACTION_TOOL.name) {
-      const parsed = transactionDraftSchema.safeParse(toolCall.arguments);
-      if (parsed.success) return { kind: "draft", draft: parsed.data };
-    }
+    const drafts = calls
+      .filter((call) => call.name === RECORD_TRANSACTION_TOOL.name)
+      .map((call) => transactionDraftSchema.safeParse(call.arguments))
+      .flatMap((parsed) => (parsed.success ? [parsed.data] : []));
+    if (drafts.length > 0) return { kind: "drafts", drafts };
 
-    if (toolCall?.name === QUERY_SPENDING_TOOL.name) {
-      const parsed = querySpendingArgsSchema.safeParse(toolCall.arguments);
+    const query = calls.find((call) => call.name === QUERY_SPENDING_TOOL.name);
+    if (query) {
+      const parsed = querySpendingArgsSchema.safeParse(query.arguments);
       if (parsed.success) return { kind: "query", params: parsed.data };
     }
 

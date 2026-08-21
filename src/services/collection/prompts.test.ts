@@ -15,6 +15,11 @@ describe("buildCollectionSystemPrompt", () => {
     expect(prompt).toContain(PLACEHOLDER_DESCRIPTION);
   });
 
+  it("instructs one record_transaction call per expense for multi-expense messages", () => {
+    const prompt = buildCollectionSystemPrompt(context).toLowerCase();
+    expect(prompt).toContain("uma vez por gasto");
+  });
+
   it("lists the available categories and today", () => {
     const prompt = buildCollectionSystemPrompt(context);
     expect(prompt).toContain("Alimentação");

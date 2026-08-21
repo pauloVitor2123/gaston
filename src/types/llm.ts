@@ -15,7 +15,7 @@ export interface ToolCall {
 }
 
 export interface ToolCallResult {
-  toolCall?: ToolCall;
+  toolCalls?: ToolCall[];
   content?: string;
 }
 

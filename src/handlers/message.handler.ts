@@ -24,6 +24,7 @@ type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CYCLES = 3;
 const MAX_THREAD_MESSAGES = 12;
+const MAX_BATCH_ITEMS = 10;
 const FALLBACK_CATEGORY_NAME = "Outros";
 
 const EXAMPLES =
@@ -161,18 +162,23 @@ export class MessageHandler {
       today: toIsoDate(today),
     });
 
-    if (turn.kind === "draft") {
-      const isPlaceholder = isPlaceholderDescription(turn.draft.description);
-      const category = isPlaceholder
-        ? findFallbackCategory(categories)
-        : resolveCategory(turn.draft.category_name, turn.draft.description, categories);
-      if (!isPlaceholder && !category && categories.length > 0) {
-        const question = categoryQuestion(categories);
-        const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
-        return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
+    if (turn.kind === "drafts") {
+      if (turn.drafts.length === 1) {
+        const single = turn.drafts[0]!;
+        const isPlaceholder = isPlaceholderDescription(single.description);
+        const category = isPlaceholder
+          ? findFallbackCategory(categories)
+          : resolveCategory(single.category_name, single.description, categories);
+        if (!isPlaceholder && !category && categories.length > 0) {
+          const question = categoryQuestion(categories);
+          const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
+          return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
+        }
+        if (pending) await this.pendingRepo.delete(pending.id);
+        return this.recordDraft(single, user.id, sanitized, today, category?.name);
       }
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordDraft(turn.draft, user.id, sanitized, today, category?.name);
+      return this.recordBatch(turn.drafts, user.id, sanitized, today, categories);
     }
 
     if (turn.kind === "query") {
@@ -192,15 +198,63 @@ export class MessageHandler {
     today: Date,
     categoryName: string | undefined,
   ): Promise<string> {
-    const input: TransactionInput = {
-      description: draft.description,
-      amount_cents: draft.amount_cents,
-      date: draft.date,
-      category_name: categoryName,
-      mantra: applyMantraRules(draft.description),
-    };
+    const input = toTransactionInput(draft, categoryName);
     await this.transactionService.persist(input, userId, rawMessage, today);
     return this.formatConfirmation(input);
+  }
+
+  private async recordBatch(
+    drafts: TransactionDraft[],
+    userId: number,
+    rawMessage: string,
+    today: Date,
+    categories: Category[],
+  ): Promise<string> {
+    const capped = drafts.slice(0, MAX_BATCH_ITEMS);
+    const excess = drafts.length - capped.length;
+    const recorded: TransactionInput[] = [];
+    const failed: TransactionInput[] = [];
+
+    for (const draft of capped) {
+      const category = resolveBatchCategory(draft, categories);
+      const input = toTransactionInput(draft, category?.name);
+      try {
+        await this.transactionService.persist(input, userId, rawMessage, today);
+        recorded.push(input);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`MessageHandler.recordBatch persist failed: ${detail}`, error);
+        failed.push(input);
+      }
+    }
+
+    return this.formatBatchConfirmation(recorded, failed, excess);
+  }
+
+  private formatBatchConfirmation(
+    recorded: TransactionInput[],
+    failed: TransactionInput[],
+    excess: number,
+  ): string {
+    if (recorded.length === 0) {
+      return "Não consegui registrar esses gastos agora 😕. Pode tentar de novo em instantes?";
+    }
+
+    const total = recorded.reduce((sum, input) => sum + input.amount_cents, 0);
+    const noun = recorded.length === 1 ? "gasto registrado" : "gastos registrados";
+    const lines = [`✅ ${recorded.length} ${noun} — ${formatReais(total)}`];
+    for (const input of recorded) {
+      const description = capitalize(input.description);
+      const category = input.category_name ? ` · 📁 ${input.category_name}` : "";
+      lines.push(`• ${description} — ${formatReais(input.amount_cents)}${category}`);
+    }
+    if (failed.length > 0) {
+      lines.push(`⚠️ Não consegui registrar ${failed.length}: ${failed.map((i) => capitalize(i.description)).join(", ")}`);
+    }
+    if (excess > 0) {
+      lines.push(`⚠️ Ignorei ${excess} além do limite de ${MAX_BATCH_ITEMS} por mensagem.`);
+    }
+    return lines.join("\n");
   }
 
   private async saveQuestion(
@@ -227,12 +281,31 @@ export class MessageHandler {
 
   private formatConfirmation(input: TransactionInput): string {
     const amount = formatReais(input.amount_cents);
-    const description = input.description.charAt(0).toUpperCase() + input.description.slice(1);
+    const description = capitalize(input.description);
     const meta: string[] = [];
     if (input.category_name) meta.push(`📁 ${input.category_name}`);
     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
     return `✅ ${description} — ${amount}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function toTransactionInput(draft: TransactionDraft, categoryName: string | undefined): TransactionInput {
+  return {
+    description: draft.description,
+    amount_cents: draft.amount_cents,
+    date: draft.date,
+    category_name: categoryName,
+    mantra: applyMantraRules(draft.description),
+  };
+}
+
+function resolveBatchCategory(draft: TransactionDraft, categories: Category[]): Category | null {
+  if (isPlaceholderDescription(draft.description)) return findFallbackCategory(categories);
+  return resolveCategory(draft.category_name, draft.description, categories) ?? findFallbackCategory(categories);
 }
 
 function categoryQuestion(categories: Category[]): string {

@@ -66,7 +66,7 @@ function makeRepos(overrides: {
 }
 
 function makeHandler(
-  turn: AgentTurn = { kind: "draft", draft: fullDraft },
+  turn: AgentTurn = { kind: "drafts", drafts: [fullDraft] },
   repoOverrides: Parameters<typeof makeRepos>[0] = {},
   report: SpendingReport = { rows: [], totalCents: 0 },
 ) {
@@ -130,8 +130,8 @@ describe("MessageHandler — record flow", () => {
 
   it("asks for a category when it cannot be resolved and saves the draft", async () => {
     const { handler, repos, transactionService } = makeHandler({
-      kind: "draft",
-      draft: { description: "coisa aleatória", amount_cents: 5000 },
+      kind: "drafts",
+      drafts: [{ description: "coisa aleatória", amount_cents: 5000 }],
     });
 
     const reply = await handler.handle(100, "gastei 50 numa coisa", "Test", ORIGIN);
@@ -144,8 +144,8 @@ describe("MessageHandler — record flow", () => {
 
   it("records a value-only expense under Outros without asking", async () => {
     const { handler, repos, transactionService } = makeHandler({
-      kind: "draft",
-      draft: { description: PLACEHOLDER_DESCRIPTION, amount_cents: 5000 },
+      kind: "drafts",
+      drafts: [{ description: PLACEHOLDER_DESCRIPTION, amount_cents: 5000 }],
     });
 
     const reply = await handler.handle(100, "gastei 50", "Test", ORIGIN);
@@ -165,8 +165,8 @@ describe("MessageHandler — record flow", () => {
 
   it("treats a capitalized/padded placeholder as value-only", async () => {
     const { handler, repos, transactionService } = makeHandler({
-      kind: "draft",
-      draft: { description: "  Gasto Avulso  ", amount_cents: 5000 },
+      kind: "drafts",
+      drafts: [{ description: "  Gasto Avulso  ", amount_cents: 5000 }],
     });
 
     const reply = await handler.handle(100, "gastei 50", "Test", ORIGIN);
@@ -179,7 +179,7 @@ describe("MessageHandler — record flow", () => {
 
   it("resolves the category from a follow-up message on the saved draft", async () => {
     const { handler, transactionService } = makeHandler(
-      { kind: "draft", draft: { description: "almoço", amount_cents: 3500, category_name: "Alimentação" } },
+      { kind: "drafts", drafts: [{ description: "almoço", amount_cents: 3500, category_name: "Alimentação" }] },
       { findActiveByUser: () => Promise.resolve(pendingDraft(7, 1)) },
     );
 
@@ -187,6 +187,75 @@ describe("MessageHandler — record flow", () => {
 
     expect(transactionService.persist).toHaveBeenCalledOnce();
     expect(reply.text).toContain("Almoço — R$ 35,00");
+  });
+});
+
+describe("MessageHandler — batch flow", () => {
+  const batchTurn: AgentTurn = {
+    kind: "drafts",
+    drafts: [
+      { description: "gasolina", amount_cents: 10000, category_name: "Alimentação" },
+      { description: "estacionamento", amount_cents: 5000 },
+    ],
+  };
+
+  it("records every expense and confirms them in one message with a total", async () => {
+    const { handler, transactionService } = makeHandler(batchTurn);
+
+    const reply = await handler.handle(100, "gastei 100 com gasolina e 50 com estacionamento", "Test", ORIGIN);
+
+    expect(transactionService.persist).toHaveBeenCalledTimes(2);
+    expect(reply.text).toContain("2 gastos registrados — R$ 150,00");
+    expect(reply.text).toContain("Gasolina — R$ 100,00");
+    expect(reply.text).toContain("Estacionamento — R$ 50,00");
+  });
+
+  it("never asks for a category in a batch: unresolved falls back to Outros", async () => {
+    const { handler, repos, transactionService } = makeHandler(batchTurn);
+
+    await handler.handle(100, "gasolina 100 e estacionamento 50", "Test", ORIGIN);
+
+    expect(repos.pendingRepo.create).not.toHaveBeenCalled();
+    const secondInput = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[1]![0];
+    expect(secondInput.category_name).toBe("Outros");
+  });
+
+  it("clears an in-progress pending draft after recording the batch", async () => {
+    const { handler, repos } = makeHandler(batchTurn, {
+      findActiveByUser: () => Promise.resolve(pendingDraft(5, 1)),
+    });
+
+    await handler.handle(100, "gasolina 100 e estacionamento 50", "Test", ORIGIN);
+
+    expect(repos.pendingRepo.delete).toHaveBeenCalledWith(5);
+  });
+
+  it("is best-effort: records the survivors and warns about the one that failed", async () => {
+    const { handler, transactionService } = makeHandler(batchTurn);
+    (transactionService.persist as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(mockTransaction)
+      .mockRejectedValueOnce(new Error("db down"));
+
+    const reply = await handler.handle(100, "gasolina 100 e estacionamento 50", "Test", ORIGIN);
+
+    expect(reply.text).toContain("1 gasto registrado — R$ 100,00");
+    expect(reply.text).toContain("Gasolina — R$ 100,00");
+    expect(reply.text).toContain("Não consegui registrar");
+    expect(reply.text).toContain("Estacionamento");
+  });
+
+  it("caps the batch at 10 items and warns about the excess", async () => {
+    const drafts = Array.from({ length: 12 }, (_, i) => ({
+      description: `item ${i}`,
+      amount_cents: 100,
+      category_name: "Alimentação",
+    }));
+    const { handler, transactionService } = makeHandler({ kind: "drafts", drafts });
+
+    const reply = await handler.handle(100, "muitos gastos", "Test", ORIGIN);
+
+    expect(transactionService.persist).toHaveBeenCalledTimes(10);
+    expect(reply.text).toContain("Ignorei 2");
   });
 });
 
