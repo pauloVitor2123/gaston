@@ -49,7 +49,7 @@ export function renderDashboardHtml(): string {
 
   <div class="grid">
     <div class="card">
-      <h2>Por categoria</h2>
+      <h2>Por categoria <button id="cat-back" style="display:none; float:right; padding:2px 10px;">← voltar</button></h2>
       <canvas id="chart-category"></canvas>
       <table id="table-category"></table>
     </div>
@@ -66,6 +66,7 @@ export function renderDashboardHtml(): string {
   var u = params.get("u");
   var t = params.get("t");
   var charts = {};
+  var categoryReport = null;
 
   function pad(n) { return String(n).padStart(2, "0"); }
   function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
@@ -133,7 +134,7 @@ export function renderDashboardHtml(): string {
     table.innerHTML = rows.join("");
   }
 
-  function renderChart(canvasId, report) {
+  function renderChart(canvasId, report, onSlice) {
     var ctx = el(canvasId);
     if (charts[canvasId]) charts[canvasId].destroy();
     if (!report.rows.length) return;
@@ -143,12 +144,35 @@ export function renderDashboardHtml(): string {
         labels: report.rows.map(function (r) { return r.label; }),
         datasets: [{ data: report.rows.map(function (r) { return r.amountCents / 100; }) }]
       },
-      options: { plugins: { legend: { position: "bottom" } } }
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        onClick: function (evt, els) { if (onSlice && els.length) onSlice(els[0].index); }
+      }
     });
+  }
+
+  function renderCategory(drillLabel) {
+    if (!categoryReport) return;
+    if (drillLabel) {
+      var cat = categoryReport.rows.filter(function (r) { return r.label === drillLabel; })[0];
+      var sub = { rows: (cat && cat.subcategories) || [], totalCents: cat ? cat.amountCents : 0 };
+      el("cat-back").style.display = "";
+      renderChart("chart-category", sub, null);
+      renderTable("table-category", sub);
+      return;
+    }
+    el("cat-back").style.display = "none";
+    renderChart("chart-category", categoryReport, function (idx) {
+      var row = categoryReport.rows[idx];
+      if (row && row.subcategories && row.subcategories.length) renderCategory(row.label);
+    });
+    renderTable("table-category", categoryReport);
   }
 
   function renderEmpty() {
     el("total").textContent = brl(0);
+    categoryReport = null;
+    el("cat-back").style.display = "none";
     ["table-category", "table-mantra"].forEach(function (id) { el(id).innerHTML = "<tr><td class='empty'>Nada nesse período.</td></tr>"; });
     ["chart-category", "chart-mantra"].forEach(function (id) { if (charts[id]) charts[id].destroy(); });
   }
@@ -162,8 +186,8 @@ export function renderDashboardHtml(): string {
         var byCategory = res[0]; var byMantra = res[1];
         el("total").textContent = brl(byCategory.totalCents);
         if (!byCategory.totalCents) { renderEmpty(); return; }
-        renderChart("chart-category", byCategory);
-        renderTable("table-category", byCategory);
+        categoryReport = byCategory;
+        renderCategory(null);
         renderChart("chart-mantra", byMantra);
         renderTable("table-mantra", byMantra);
       })
@@ -172,6 +196,7 @@ export function renderDashboardHtml(): string {
 
   el("mode").addEventListener("change", function () { syncControls(); load(); });
   el("apply").addEventListener("click", load);
+  el("cat-back").addEventListener("click", function () { renderCategory(null); });
   syncControls();
   load();
 })();

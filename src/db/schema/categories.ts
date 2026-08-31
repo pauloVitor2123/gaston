@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import {
+  type AnySQLiteColumn,
+  integer,
+  sqliteTable,
+  text,
+  unique,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { users } from "./users";
 
 export const categories = sqliteTable(
@@ -14,8 +21,14 @@ export const categories = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),
+    parentId: integer("parent_id").references((): AnySQLiteColumn => categories.id),
   },
-  (t) => ({ userNameUnique: unique().on(t.userId, t.name) }),
+  (t) => ({
+    userParentNameUnique: unique().on(t.userId, t.parentId, t.name),
+    userTopNameUnique: uniqueIndex("categories_user_top_name_unique")
+      .on(t.userId, t.name)
+      .where(sql`${t.parentId} is null`),
+  }),
 );
 
 export type Category = typeof categories.$inferSelect;

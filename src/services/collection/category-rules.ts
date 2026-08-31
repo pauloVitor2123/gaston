@@ -47,3 +47,50 @@ export function resolveCategory(
 ): Category | null {
   return matchCategory(explicitName, categories) ?? inferCategory(description, categories);
 }
+
+export function isTopLevel(category: Category): boolean {
+  return category.parentId === null;
+}
+
+export function childrenOf(category: Category, categories: Category[]): Category[] {
+  return categories.filter((c) => c.parentId === category.id);
+}
+
+export type CategoryResolution = { category: Category; subcategory: Category | null };
+
+export function resolveCategoryTree(
+  explicitName: string | undefined,
+  description: string,
+  categories: Category[],
+): CategoryResolution | null {
+  const topLevel = categories.filter(isTopLevel);
+  const explicit = matchCategory(explicitName, topLevel);
+  if (explicit) {
+    return { category: explicit, subcategory: inferCategory(description, childrenOf(explicit, categories)) };
+  }
+  for (const category of topLevel) {
+    const subcategory = inferCategory(description, childrenOf(category, categories));
+    if (subcategory) return { category, subcategory };
+  }
+  for (const category of topLevel) {
+    if (inferCategory(description, [category])) return { category, subcategory: null };
+  }
+  return null;
+}
+
+export type SubcategoryMatch =
+  | { kind: "existing"; subcategory: Category }
+  | { kind: "new"; name: string }
+  | { kind: "none" };
+
+export function canonicalizeSubcategory(
+  proposedName: string | undefined,
+  category: Category,
+  categories: Category[],
+): SubcategoryMatch {
+  const existing = matchCategory(proposedName, childrenOf(category, categories));
+  if (existing) return { kind: "existing", subcategory: existing };
+  const trimmed = proposedName?.trim();
+  if (trimmed) return { kind: "new", name: trimmed };
+  return { kind: "none" };
+}

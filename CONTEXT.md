@@ -86,6 +86,43 @@ descritos em português). Seed inicial — cresce conforme os módulos ganham no
   cria ciclo; um draft anterior entra só como **contexto** na thread, sem modo especial. A
   confirmação é **uma** mensagem consolidada (uma linha por gasto + total). Ver [[ADR-003]].
 
+## Categorização (Category & Subcategory)
+
+- **Subcategoria** — o segundo (e último) nível da taxonomia de gastos: filha estrita de **uma**
+  categoria (`Transporte → {App, Combustível}`, `Alimentação → {Mercado, Restaurante}`). Existe pra
+  responder "pra onde o dinheiro foi" com mais granularidade sem o usuário jamais digitá-la.
+  Modelada como **categoria com pai** (`categories.parent_id`, auto-referente); `transactions`
+  ganha `subcategory_id` nullable. **Invariante dos 2 níveis:** topo é `parent_id IS NULL`; o pai
+  de uma subcategoria é sempre topo (não existe nível 3) — criar sub sob uma categoria que já é
+  filha é rejeitado. Um helper (`isTopLevel`/`childrenOf`) é a única porta pra essa regra; toda
+  listagem/agregação de "categoria" filtra topo, e a sub só aparece em drill-down.
+- **Termos moram na sub (fonte única) + roll-up** — os `synonyms` finos vivem na **subcategoria**
+  (`Combustível: [gasolina, gnv, ...]`), não duplicados no pai. A inferência de **categoria**
+  resolve casando os `synonyms` **dela ∪ de qualquer filho**: `"gasolina 100"` casa via filho
+  Combustível e resolve **Transporte / Combustível** numa passada. Sem isso, mover os termos pra
+  baixo faria o topo parar de casar e o código perguntaria a categoria (regressão).
+- **Vocabulário aberto com canonicalização** — o conjunto de subs de uma categoria **cresce
+  sozinho**. O LLM (que já roda em todo gasto) propõe `subcategory_name`; o código **canonicaliza**:
+  normaliza e casa contra `name+synonyms` dos filhos daquela categoria → casou **reusa**, senão
+  **cria** uma sub nova (synonyms vazio). O prompt mostra as subs atuais e manda **reusar quando
+  couber** — é a trava anti-fragmentação (evita `Gasolina`/`Combustível`/`Abastecimento` virarem
+  três). **Não há auto-aprendizado** de termo a partir do texto livre (evita ruído); frasear novo é
+  coberto pelo LLM a cada vez. A sub proposta pelo LLM só vale se pertencer à **categoria final**
+  resolvida pelo código; senão, `null`.
+- **"(sem subcategoria)" é linha de primeira classe** — invariante de relatório: um gasto que
+  resolveu **categoria** mas **não** sub não é erro nem falta — é o bucket `(sem subcategoria)`,
+  que aparece explícito ao lado das subs **quando a categoria tem ao menos uma sub real**. Categoria
+  sem nenhuma sub no período permanece uma linha **plana** (não ganha um bucket solitário igual ao
+  total) — a indentação só surge onde há de fato granularidade. É onde caem *gasto avulso* (só valor), itens de *lote*
+  sem match, e todo o **histórico** anterior à feature (nasce `null`, **sem backfill**). O Gaston
+  **nunca pergunta** a subcategoria — ela é sempre best-effort, coerente com [[O que o Gaston nunca
+  pergunta]]. Ver [[ADR-004]].
+- **Árvore nos relatórios** — `query_spending` **não ganha parâmetros**: `group_by: "category"`
+  passa a devolver a **árvore** (categoria + subs + `(sem subcategoria)`), e o agente lê a árvore
+  pra responder perguntas finas ("só gasolina") em texto. O `/status` mostra cada categoria com as
+  **subs indentadas** (só quando existem) + a linha `(sem sub)`; o `/dashboard` faz **drill-down por
+  clique** (fatia da categoria → subs), reusando a mesma árvore de `/api/report`.
+
 ## Resposta (BotReply)
 
 - **BotReply** — o valor de domínio que representa o que o Gaston responde: `{ text: string;

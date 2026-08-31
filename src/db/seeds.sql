@@ -6,8 +6,8 @@ INSERT OR IGNORE INTO cards (user_id, name, aliases, brand, closing_day, due_day
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Nubank PJ', '["nubank pj","nu pj","pj"]', 'Mastercard', 31, 7);
 
 INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
-  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Alimentação', '["comida","almoço","lanche","mercado","restaurante"]'),
-  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Transporte',  '["uber","99","gasolina","ônibus","combustível"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Alimentação', '["alimentação","comida"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Transporte',  '["transporte"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Saúde',       '["farmácia","remédio","médico","consulta"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Lazer',       '["cinema","bar","streaming","jogo"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Educação',    '["curso","livro","faculdade"]'),
@@ -18,6 +18,16 @@ INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Presentes',   '["presente","lembrancinha","aniversário"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pet',         '["ração","veterinário","pet shop","petshop","tosa","cachorro","gato"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Outros',      '[]');
+
+INSERT OR IGNORE INTO categories (user_id, name, synonyms, parent_id) VALUES
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'App',         '["uber","99","ônibus","táxi","metrô","transporte público"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Combustível', '["gasolina","gnv","álcool","etanol","combustível","abastecer","posto"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Mercado',     '["mercado","supermercado","feira","hortifruti"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Alimentação' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Restaurante', '["restaurante","lanche","almoço","ifood","bar","padaria"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Alimentação' AND parent_id IS NULL));
 
 INSERT OR IGNORE INTO mantras (user_id, name, target_percent) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pagas as Contas', 0.45),

@@ -1,10 +1,16 @@
-import type { ISpendingRepository, SpendingFilter, SpendingRow } from "@/types/repository";
+import type {
+  CategorySubSpendingRow,
+  ISpendingRepository,
+  SpendingFilter,
+  SpendingRow,
+} from "@/types/repository";
 import type { QuerySpendingArgs, SpendingGroupBy } from "@/services/analytics/query";
 import { addDaysUtc, parseUtcDate } from "@/services/dates";
 
 export interface SpendingBreakdownRow {
   label: string;
   amountCents: number;
+  subcategories?: SpendingBreakdownRow[];
 }
 
 export interface SpendingReport {
@@ -18,6 +24,8 @@ const UNLABELED: Record<SpendingGroupBy, string> = {
   none: "Total",
 };
 
+const NO_SUBCATEGORY_LABEL = "(sem subcategoria)";
+
 export class AnalyticsService {
   constructor(private readonly spendingRepo: ISpendingRepository) {}
 
@@ -28,24 +36,48 @@ export class AnalyticsService {
       to: addDaysUtc(parseUtcDate(params.to), 1),
     };
 
-    const rows = await this.rowsFor(params.group_by, filter);
-    const labeled = rows
-      .map((row) => ({ label: row.label ?? UNLABELED[params.group_by], amountCents: row.amountCents }))
-      .sort((a, b) => b.amountCents - a.amountCents);
-    const totalCents = labeled.reduce((sum, row) => sum + row.amountCents, 0);
-    return { rows: labeled, totalCents };
+    const rows =
+      params.group_by === "category"
+        ? this.categoryTree(await this.spendingRepo.sumByCategoryTree(filter))
+        : this.flatRows(await this.flatRowsFor(params.group_by, filter), params.group_by);
+    const totalCents = rows.reduce((sum, row) => sum + row.amountCents, 0);
+    return { rows, totalCents };
   }
 
-  private async rowsFor(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingRow[]> {
-    switch (groupBy) {
-      case "none": {
-        const total = await this.spendingRepo.sumTotal(filter);
-        return total > 0 ? [{ label: null, amountCents: total }] : [];
+  private flatRows(rows: SpendingRow[], groupBy: SpendingGroupBy): SpendingBreakdownRow[] {
+    return rows
+      .map((row) => ({ label: row.label ?? UNLABELED[groupBy], amountCents: row.amountCents }))
+      .sort((a, b) => b.amountCents - a.amountCents);
+  }
+
+  private categoryTree(rows: CategorySubSpendingRow[]): SpendingBreakdownRow[] {
+    const byCategory = new Map<string, { amountCents: number; subs: SpendingBreakdownRow[] }>();
+    for (const row of rows) {
+      const label = row.categoryLabel ?? UNLABELED.category;
+      const entry = byCategory.get(label) ?? { amountCents: 0, subs: [] };
+      entry.amountCents += row.amountCents;
+      if (row.subcategoryLabel !== null) {
+        entry.subs.push({ label: row.subcategoryLabel, amountCents: row.amountCents });
+      } else if (rows.some((r) => (r.categoryLabel ?? UNLABELED.category) === label && r.subcategoryLabel !== null)) {
+        entry.subs.push({ label: NO_SUBCATEGORY_LABEL, amountCents: row.amountCents });
       }
-      case "category":
-        return this.spendingRepo.sumByCategory(filter);
-      case "mantra":
-        return this.spendingRepo.sumByMantra(filter);
+      byCategory.set(label, entry);
     }
+
+    return [...byCategory.entries()]
+      .map(([label, { amountCents, subs }]) =>
+        subs.length > 0
+          ? { label, amountCents, subcategories: subs.sort((a, b) => b.amountCents - a.amountCents) }
+          : { label, amountCents },
+      )
+      .sort((a, b) => b.amountCents - a.amountCents);
+  }
+
+  private async flatRowsFor(groupBy: "none" | "mantra", filter: SpendingFilter): Promise<SpendingRow[]> {
+    if (groupBy === "none") {
+      const total = await this.spendingRepo.sumTotal(filter);
+      return total > 0 ? [{ label: null, amountCents: total }] : [];
+    }
+    return this.spendingRepo.sumByMantra(filter);
   }
 }

@@ -6,6 +6,7 @@ export const transactionDraftSchema = z.object({
   description: z.string().min(1),
   amount_cents: z.number().int().nonnegative(),
   category_name: z.string().min(1).optional(),
+  subcategory_name: z.string().min(1).optional(),
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -28,6 +29,7 @@ export const RECORD_TRANSACTION_TOOL: ToolDefinition = {
     `Sem nenhum contexto do que foi (só o valor), use description exatamente "${PLACEHOLDER_DESCRIPTION}" e registre — não pergunte. ` +
     "category_name: escolha a categoria mais provável da lista quando der pra inferir com segurança; " +
     "se não der, deixe em branco (o usuário será perguntado). " +
+    "subcategory_name: opcional; reuse uma subcategoria existente da categoria quando servir, senão um nome curto novo; nunca pergunte. " +
     "date: YYYY-MM-DD, só quando o usuário indicar outra data que não hoje ('ontem', 'dia 3'); nunca pergunte a data.",
   parameters: toToolParameters(transactionDraftSchema),
 };

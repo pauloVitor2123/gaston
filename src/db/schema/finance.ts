@@ -74,6 +74,7 @@ export const transactions = sqliteTable(
     cardId: integer("card_id").references(() => cards.id),
     cardInvoiceId: integer("card_invoice_id").references(() => cardInvoices.id),
     categoryId: integer("category_id").references(() => categories.id),
+    subcategoryId: integer("subcategory_id").references(() => categories.id),
     mantraId: integer("mantra_id").references(() => mantras.id),
     source: text("source", { enum: ["user", "installment", "recurring"] })
       .notNull()

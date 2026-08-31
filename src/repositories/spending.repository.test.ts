@@ -23,6 +23,12 @@ async function setup(chatId: number) {
     name: "Transporte",
     synonyms: [],
   });
+  const combustivel = await new CategoryRepository(db).create({
+    userId: user.id,
+    name: "Combustível",
+    synonyms: [],
+    parentId: transporte.id,
+  });
   const mantra = await new MantraRepository(db).create({
     userId: user.id,
     name: "Pagas as Contas",
@@ -41,13 +47,14 @@ async function setup(chatId: number) {
     repo: new SpendingRepository(db),
     userId: user.id,
     transporteId: transporte.id,
+    combustivelId: combustivel.id,
     base,
   };
 }
 
 describe("SpendingRepository", () => {
-  it("sumByCategory groups over a due-date range, using actual over expected", async () => {
-    const { txRepo, repo, userId, transporteId, base } = await setup(5001);
+  it("sumByCategoryTree groups by category and subcategory, using actual over expected", async () => {
+    const { txRepo, repo, userId, transporteId, combustivelId, base } = await setup(5001);
     const inRange = new Date("2026-08-05");
     const settled = new Date("2026-08-10");
 
@@ -62,16 +69,27 @@ describe("SpendingRepository", () => {
       accrualDate: settled,
       dueDate: settled,
     });
+    await txRepo.create({
+      ...base,
+      description: "gasolina",
+      categoryId: transporteId,
+      subcategoryId: combustivelId,
+      expectedAmountCents: 20000,
+      accrualDate: inRange,
+      dueDate: inRange,
+    });
     await txRepo.create({ ...base, description: "fora", expectedAmountCents: 99900, accrualDate: new Date("2026-09-02"), dueDate: new Date("2026-09-02") });
     await txRepo.create({ ...base, description: "cancelado", status: "cancelled", expectedAmountCents: 5000, accrualDate: inRange, dueDate: inRange });
     await txRepo.create({ ...base, description: "recebimento", direction: "in", expectedAmountCents: 70000, accrualDate: inRange, dueDate: inRange });
 
-    const rows = await repo.sumByCategory({ userId, ...AUG });
+    const rows = await repo.sumByCategoryTree({ userId, ...AUG });
 
-    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
-    expect(byLabel["Alimentação"]).toBe(45000);
-    expect(byLabel["Transporte"]).toBe(32000);
-    expect(rows).toHaveLength(2);
+    const key = (c: string | null, s: string | null) => `${c}/${s}`;
+    const byKey = Object.fromEntries(rows.map((r) => [key(r.categoryLabel, r.subcategoryLabel), r.amountCents]));
+    expect(byKey[key("Alimentação", null)]).toBe(45000);
+    expect(byKey[key("Transporte", null)]).toBe(32000);
+    expect(byKey[key("Transporte", "Combustível")]).toBe(20000);
+    expect(rows).toHaveLength(3);
   });
 
   it("sumByMantra groups spending by mantra", async () => {

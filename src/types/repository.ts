@@ -39,13 +39,19 @@ export interface SpendingRow {
   amountCents: number;
 }
 
+export interface CategorySubSpendingRow {
+  categoryLabel: string | null;
+  subcategoryLabel: string | null;
+  amountCents: number;
+}
+
 export interface ITransactionRepository {
   create(data: NewTransaction): Promise<Transaction>;
 }
 
 export interface ISpendingRepository {
   sumTotal(filter: SpendingFilter): Promise<number>;
-  sumByCategory(filter: SpendingFilter): Promise<SpendingRow[]>;
+  sumByCategoryTree(filter: SpendingFilter): Promise<CategorySubSpendingRow[]>;
   sumByMantra(filter: SpendingFilter): Promise<SpendingRow[]>;
 }
 

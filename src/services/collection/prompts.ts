@@ -1,8 +1,20 @@
 import { PLACEHOLDER_DESCRIPTION } from "@/services/collection/draft";
 
+export interface CategoryOption {
+  name: string;
+  subcategories: string[];
+}
+
 export interface AgentContext {
-  categories: string[];
+  categories: CategoryOption[];
   today: string;
+}
+
+function renderCategories(categories: CategoryOption[]): string {
+  if (categories.length === 0) return "(nenhuma)";
+  return categories
+    .map((c) => (c.subcategories.length ? `- ${c.name}: ${c.subcategories.join(", ")}` : `- ${c.name}`))
+    .join("\n");
 }
 
 export function buildCollectionSystemPrompt(context: AgentContext): string {
@@ -20,8 +32,10 @@ Se o usuário relatar VÁRIOS gastos numa mesma mensagem ("gastei 100 com gasoli
 Para registrar, o único campo obrigatório do usuário é amount_cents (centavos, inteiro).
 - description: se o usuário der qualquer contexto ("padaria", "uber"), use-o; se vier só o valor, sem nenhum contexto, use exatamente "${PLACEHOLDER_DESCRIPTION}" e registre — NUNCA pergunte a descrição.
 - category_name: escolha a categoria mais provável da lista quando der pra inferir com segurança; se não der, deixe em branco (o código pergunta). Não pergunte você.
+- subcategory_name: opcional, para detalhar dentro da categoria. Reuse EXATAMENTE uma das subcategorias listadas da categoria quando servir; só invente um nome curto e novo se nenhuma existente couber. NUNCA pergunte a subcategoria — deixe em branco se não souber.
 - date: YYYY-MM-DD (padrão: ${context.today}). NUNCA pergunte a data — se o usuário não indicar outra ("ontem", "dia 3"), deixe em branco que o código assume hoje.
 
-Categorias disponíveis: ${context.categories.join(", ") || "(nenhuma)"}
+Categorias disponíveis (subcategorias após os dois-pontos):
+${renderCategories(context.categories)}
 Data de hoje: ${context.today}.`;
 }

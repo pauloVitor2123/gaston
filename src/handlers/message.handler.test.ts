@@ -27,8 +27,10 @@ const mockUser: User = {
 } as unknown as User;
 
 const mockCategories: Category[] = [
-  { id: 1, userId: 1, name: "Alimentação", synonyms: [] } as Category,
-  { id: 2, userId: 1, name: "Outros", synonyms: [] } as Category,
+  { id: 1, userId: 1, name: "Alimentação", synonyms: [], parentId: null } as Category,
+  { id: 2, userId: 1, name: "Outros", synonyms: [], parentId: null } as Category,
+  { id: 3, userId: 1, name: "Transporte", synonyms: ["transporte"], parentId: null } as Category,
+  { id: 4, userId: 1, name: "Combustível", synonyms: ["gasolina", "gnv"], parentId: 3 } as Category,
 ];
 
 const mockTransaction = { id: 99, userId: 1 } as Transaction;
@@ -128,6 +130,58 @@ describe("MessageHandler — record flow", () => {
     expect(reply.text).toContain("🎯 Pagas as Contas");
   });
 
+  it("resolves the subcategory from the description and shows it in the confirmation", async () => {
+    const { handler, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [{ description: "gasolina", amount_cents: 10000 }],
+    });
+
+    const reply = await handler.handle(100, "gasolina 100", "Test", ORIGIN);
+
+    const [input] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input.category_name).toBe("Transporte");
+    expect(input.subcategory_id).toBe(4);
+    expect(reply.text).toContain("Combustível");
+  });
+
+  it("reuses an existing subcategory proposed by the LLM when the description matches none", async () => {
+    const { handler, repos, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [
+        { description: "paguei 30", amount_cents: 3000, category_name: "Transporte", subcategory_name: "Combustível" },
+      ],
+    });
+
+    await handler.handle(100, "transporte 30", "Test", ORIGIN);
+
+    expect(repos.categoryRepo.create).not.toHaveBeenCalled();
+    const [input] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input.category_name).toBe("Transporte");
+    expect(input.subcategory_id).toBe(4);
+  });
+
+  it("creates a new subcategory proposed by the LLM and persists its id", async () => {
+    const created = { id: 77, userId: 1, name: "Pedágio", synonyms: [], parentId: 3 } as Category;
+    const { handler, repos, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [
+        { description: "paguei 30", amount_cents: 3000, category_name: "Transporte", subcategory_name: "Pedágio" },
+      ],
+    });
+    (repos.categoryRepo.create as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+
+    await handler.handle(100, "transporte 30", "Test", ORIGIN);
+
+    expect(repos.categoryRepo.create).toHaveBeenCalledWith({
+      userId: 1,
+      name: "Pedágio",
+      parentId: 3,
+      synonyms: [],
+    });
+    const [input] = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input.subcategory_id).toBe(77);
+  });
+
   it("asks for a category when it cannot be resolved and saves the draft", async () => {
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
@@ -220,6 +274,26 @@ describe("MessageHandler — batch flow", () => {
     expect(secondInput.category_name).toBe("Outros");
   });
 
+  it("assigns a subcategory per item and leaves unmatched items without one", async () => {
+    const { handler, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [
+        { description: "gasolina", amount_cents: 10000 },
+        { description: "estacionamento", amount_cents: 5000 },
+      ],
+    });
+
+    await handler.handle(100, "gasolina 100 e estacionamento 50", "Test", ORIGIN);
+
+    const persist = transactionService.persist as ReturnType<typeof vi.fn>;
+    const first = persist.mock.calls[0]![0];
+    const second = persist.mock.calls[1]![0];
+    expect(first.category_name).toBe("Transporte");
+    expect(first.subcategory_id).toBe(4);
+    expect(second.category_name).toBe("Outros");
+    expect(second.subcategory_id).toBeUndefined();
+  });
+
   it("clears an in-progress pending draft after recording the batch", async () => {
     const { handler, repos } = makeHandler(batchTurn, {
       findActiveByUser: () => Promise.resolve(pendingDraft(5, 1)),
@@ -277,6 +351,28 @@ describe("MessageHandler — query flow", () => {
     expect(reply.text).toContain("Alimentação — R$ 450,00");
     expect(reply.text).toContain("Total: R$ 450,00");
   });
+
+  it("indents subcategories in a category query report", async () => {
+    const { handler } = makeHandler(
+      { kind: "query", params: { group_by: "category", from: "2026-08-01", to: "2026-08-31" } },
+      {},
+      {
+        rows: [
+          {
+            label: "Transporte",
+            amountCents: 45000,
+            subcategories: [{ label: "Combustível", amountCents: 30000 }],
+          },
+        ],
+        totalCents: 45000,
+      },
+    );
+
+    const reply = await handler.handle(100, "gastos por categoria", "Test", ORIGIN);
+
+    expect(reply.text).toContain("Transporte — R$ 450,00");
+    expect(reply.text).toContain("↳ Combustível — R$ 300,00");
+  });
 });
 
 describe("MessageHandler — commands", () => {
@@ -296,6 +392,28 @@ describe("MessageHandler — commands", () => {
     expect(reply.text).toContain("Agosto/2026");
     expect(reply.text).toContain("Alimentação — R$ 450,00");
     expect(reply.text).toContain("/dashboard");
+  });
+
+  it("/status indents subcategories under their category", async () => {
+    const { handler } = makeHandler({ kind: "question", text: "?" }, {}, {
+      rows: [
+        {
+          label: "Transporte",
+          amountCents: 45000,
+          subcategories: [
+            { label: "Combustível", amountCents: 30000 },
+            { label: "(sem subcategoria)", amountCents: 15000 },
+          ],
+        },
+      ],
+      totalCents: 45000,
+    });
+
+    const reply = await handler.handle(100, "/status", "Test", ORIGIN);
+
+    expect(reply.text).toContain("Transporte — R$ 450,00");
+    expect(reply.text).toContain("↳ Combustível — R$ 300,00");
+    expect(reply.text).toContain("↳ (sem subcategoria) — R$ 150,00");
   });
 
   it("/status reports no spending when the month is empty", async () => {

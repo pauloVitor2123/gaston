@@ -4,7 +4,7 @@ import { CollectionAgent } from "@/services/collection/collection-agent";
 import type { AgentContext } from "@/services/collection/prompts";
 
 const context: AgentContext = {
-  categories: ["Alimentação"],
+  categories: [{ name: "Alimentação", subcategories: [] }],
   today: "2026-07-31",
 };
 

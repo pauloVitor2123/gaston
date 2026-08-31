@@ -12,7 +12,12 @@ import type { Clock } from "@/services/clock";
 import type { Category, PendingConversation, User } from "@/db/schema";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
-import { resolveCategory } from "@/services/collection/category-rules";
+import {
+  type CategoryResolution,
+  canonicalizeSubcategory,
+  isTopLevel,
+  resolveCategoryTree,
+} from "@/services/collection/category-rules";
 import type { AnalyticsService, SpendingReport } from "@/services/analytics/analytics.service";
 import type { QuerySpendingArgs } from "@/services/analytics/query";
 import type { DashboardLink } from "@/services/dashboard/token";
@@ -119,9 +124,13 @@ export class MessageHandler {
       return `📊 ${month}\n\nNenhum gasto registrado ainda neste mês.`;
     }
 
-    const lines = report.rows.map((row) => {
+    const lines = report.rows.flatMap((row) => {
       const pct = Math.round((row.amountCents / report.totalCents) * 100);
-      return `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
+      const head = `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
+      const subs = (row.subcategories ?? []).map(
+        (sub) => `   ↳ ${sub.label} — ${formatReais(sub.amountCents)}`,
+      );
+      return [head, ...subs];
     });
     return (
       `📊 ${month} — gastos até hoje\n\n` +
@@ -158,24 +167,31 @@ export class MessageHandler {
     ];
 
     const turn = await this.agent.run(messages, {
-      categories: categories.map((c) => c.name),
+      categories: topLevelCategories(categories).map((c) => ({
+        name: c.name,
+        subcategories: categories.filter((s) => s.parentId === c.id).map((s) => s.name),
+      })),
       today: toIsoDate(today),
     });
 
     if (turn.kind === "drafts") {
       if (turn.drafts.length === 1) {
         const single = turn.drafts[0]!;
-        const isPlaceholder = isPlaceholderDescription(single.description);
-        const category = isPlaceholder
-          ? findFallbackCategory(categories)
-          : resolveCategory(single.category_name, single.description, categories);
-        if (!isPlaceholder && !category && categories.length > 0) {
-          const question = categoryQuestion(categories);
+        if (isPlaceholderDescription(single.description)) {
+          if (pending) await this.pendingRepo.delete(pending.id);
+          return this.recordDraft(single, user.id, sanitized, today, findFallbackCategory(categories), null);
+        }
+        const resolution = resolveCategoryTree(single.category_name, single.description, categories);
+        if (!resolution && categories.length > 0) {
+          const question = categoryQuestion(topLevelCategories(categories));
           const thread: LLMMessage[] = [...messages, { role: "assistant", content: question }];
           return this.saveQuestion(user, pending, thread, (draft?.cycles ?? 0) + 1, question);
         }
+        const subcategory = resolution
+          ? await this.resolveSubcategory(resolution, single, user.id, categories)
+          : null;
         if (pending) await this.pendingRepo.delete(pending.id);
-        return this.recordDraft(single, user.id, sanitized, today, category?.name);
+        return this.recordDraft(single, user.id, sanitized, today, resolution?.category ?? null, subcategory);
       }
       if (pending) await this.pendingRepo.delete(pending.id);
       return this.recordBatch(turn.drafts, user.id, sanitized, today, categories);
@@ -196,11 +212,46 @@ export class MessageHandler {
     userId: number,
     rawMessage: string,
     today: Date,
-    categoryName: string | undefined,
+    category: Category | null,
+    subcategory: Category | null,
   ): Promise<string> {
-    const input = toTransactionInput(draft, categoryName);
+    const input = toTransactionInput(draft, category, subcategory);
     await this.transactionService.persist(input, userId, rawMessage, today);
     return this.formatConfirmation(input);
+  }
+
+  private async resolveBatchItem(
+    draft: TransactionDraft,
+    userId: number,
+    categories: Category[],
+  ): Promise<{ category: Category | null; subcategory: Category | null }> {
+    if (isPlaceholderDescription(draft.description)) {
+      return { category: findFallbackCategory(categories), subcategory: null };
+    }
+    const resolution = resolveCategoryTree(draft.category_name, draft.description, categories);
+    if (!resolution) return { category: findFallbackCategory(categories), subcategory: null };
+    const subcategory = await this.resolveSubcategory(resolution, draft, userId, categories);
+    return { category: resolution.category, subcategory };
+  }
+
+  private async resolveSubcategory(
+    resolution: CategoryResolution,
+    draft: TransactionDraft,
+    userId: number,
+    categories: Category[],
+  ): Promise<Category | null> {
+    if (resolution.subcategory) return resolution.subcategory;
+    const match = canonicalizeSubcategory(draft.subcategory_name, resolution.category, categories);
+    if (match.kind === "existing") return match.subcategory;
+    if (match.kind === "new" && isTopLevel(resolution.category)) {
+      return this.categoryRepo.create({
+        userId,
+        name: match.name,
+        parentId: resolution.category.id,
+        synonyms: [],
+      });
+    }
+    return null;
   }
 
   private async recordBatch(
@@ -216,8 +267,8 @@ export class MessageHandler {
     const failed: TransactionInput[] = [];
 
     for (const draft of capped) {
-      const category = resolveBatchCategory(draft, categories);
-      const input = toTransactionInput(draft, category?.name);
+      const { category, subcategory } = await this.resolveBatchItem(draft, userId, categories);
+      const input = toTransactionInput(draft, category, subcategory);
       try {
         await this.transactionService.persist(input, userId, rawMessage, today);
         recorded.push(input);
@@ -283,7 +334,12 @@ export class MessageHandler {
     const amount = formatReais(input.amount_cents);
     const description = capitalize(input.description);
     const meta: string[] = [];
-    if (input.category_name) meta.push(`📁 ${input.category_name}`);
+    if (input.category_name) {
+      const label = input.subcategory_name
+        ? `${input.category_name} › ${input.subcategory_name}`
+        : input.category_name;
+      meta.push(`📁 ${label}`);
+    }
     if (input.mantra) meta.push(`🎯 ${input.mantra}`);
     return `✅ ${description} — ${amount}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
@@ -293,19 +349,24 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function toTransactionInput(draft: TransactionDraft, categoryName: string | undefined): TransactionInput {
+function toTransactionInput(
+  draft: TransactionDraft,
+  category: Category | null,
+  subcategory: Category | null,
+): TransactionInput {
   return {
     description: draft.description,
     amount_cents: draft.amount_cents,
     date: draft.date,
-    category_name: categoryName,
+    category_name: category?.name,
+    subcategory_id: subcategory?.id,
+    subcategory_name: subcategory?.name,
     mantra: applyMantraRules(draft.description),
   };
 }
 
-function resolveBatchCategory(draft: TransactionDraft, categories: Category[]): Category | null {
-  if (isPlaceholderDescription(draft.description)) return findFallbackCategory(categories);
-  return resolveCategory(draft.category_name, draft.description, categories) ?? findFallbackCategory(categories);
+function topLevelCategories(categories: Category[]): Category[] {
+  return categories.filter((c) => c.parentId === null);
 }
 
 function categoryQuestion(categories: Category[]): string {
@@ -339,9 +400,13 @@ function formatSpendingReport(params: QuerySpendingArgs, report: SpendingReport)
     return `${header}\n\nTotal: ${formatReais(report.totalCents)}`;
   }
 
-  const lines = report.rows.map((row) => {
+  const lines = report.rows.flatMap((row) => {
     const pct = Math.round((row.amountCents / report.totalCents) * 100);
-    return `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
+    const head = `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
+    const subs = (row.subcategories ?? []).map(
+      (sub) => `   ↳ ${sub.label} — ${formatReais(sub.amountCents)}`,
+    );
+    return [head, ...subs];
   });
   return `${header}\n${lines.join("\n")}\n\nTotal: ${formatReais(report.totalCents)}`;
 }

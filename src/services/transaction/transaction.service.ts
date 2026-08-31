@@ -13,6 +13,8 @@ export interface TransactionInput {
   amount_cents: number;
   date?: string;
   category_name?: string;
+  subcategory_id?: number;
+  subcategory_name?: string;
   mantra?: Mantra;
 }
 
@@ -52,6 +54,7 @@ export class TransactionService {
       dueDate: accrualDate,
       paymentMethod: "cash",
       categoryId: category?.id,
+      subcategoryId: input.subcategory_id,
       mantraId: mantra?.id,
       source: "user",
       rawMessage,

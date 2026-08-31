@@ -1,26 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ISpendingRepository, SpendingFilter, SpendingRow } from "@/types/repository";
+import type {
+  CategorySubSpendingRow,
+  ISpendingRepository,
+  SpendingFilter,
+} from "@/types/repository";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
 
 function makeRepo(overrides: Partial<ISpendingRepository> = {}): ISpendingRepository {
   return {
     sumTotal: vi.fn(async () => 0),
-    sumByCategory: vi.fn(async () => []),
+    sumByCategoryTree: vi.fn(async () => []),
     sumByMantra: vi.fn(async () => []),
     ...overrides,
   };
 }
 
 describe("AnalyticsService.aggregate", () => {
-  it("routes group_by to the matching repo method and sorts rows desc with total", async () => {
-    const sumByCategory = vi.fn(
-      async (): Promise<SpendingRow[]> => [
-        { label: "Transporte", amountCents: 30000 },
-        { label: "Alimentação", amountCents: 45000 },
+  it("nests subcategories under each category, rolling up and sorting desc with total", async () => {
+    const sumByCategoryTree = vi.fn(
+      async (): Promise<CategorySubSpendingRow[]> => [
+        { categoryLabel: "Transporte", subcategoryLabel: "Combustível", amountCents: 20000 },
+        { categoryLabel: "Transporte", subcategoryLabel: null, amountCents: 10000 },
+        { categoryLabel: "Alimentação", subcategoryLabel: null, amountCents: 45000 },
       ],
     );
-    const repo = makeRepo({ sumByCategory });
-    const service = new AnalyticsService(repo);
+    const service = new AnalyticsService(makeRepo({ sumByCategoryTree }));
 
     const report = await service.aggregate(1, {
       group_by: "category",
@@ -28,10 +32,17 @@ describe("AnalyticsService.aggregate", () => {
       to: "2026-08-31",
     });
 
-    expect(sumByCategory).toHaveBeenCalledOnce();
+    expect(sumByCategoryTree).toHaveBeenCalledOnce();
     expect(report.rows).toEqual([
       { label: "Alimentação", amountCents: 45000 },
-      { label: "Transporte", amountCents: 30000 },
+      {
+        label: "Transporte",
+        amountCents: 30000,
+        subcategories: [
+          { label: "Combustível", amountCents: 20000 },
+          { label: "(sem subcategoria)", amountCents: 10000 },
+        ],
+      },
     ]);
     expect(report.totalCents).toBe(75000);
   });
@@ -39,9 +50,9 @@ describe("AnalyticsService.aggregate", () => {
   it("labels null groups and makes the end date inclusive", async () => {
     let captured: SpendingFilter | undefined;
     const repo = makeRepo({
-      sumByCategory: vi.fn(async (f: SpendingFilter) => {
+      sumByCategoryTree: vi.fn(async (f: SpendingFilter) => {
         captured = f;
-        return [{ label: null, amountCents: 1000 }];
+        return [{ categoryLabel: null, subcategoryLabel: null, amountCents: 1000 }];
       }),
     });
     const service = new AnalyticsService(repo);
@@ -53,6 +64,7 @@ describe("AnalyticsService.aggregate", () => {
     });
 
     expect(report.rows[0]!.label).toBe("Sem categoria");
+    expect(report.rows[0]!.subcategories).toBeUndefined();
     expect(captured!.from).toEqual(new Date(Date.UTC(2026, 7, 1)));
     expect(captured!.to).toEqual(new Date(Date.UTC(2026, 8, 1)));
   });
