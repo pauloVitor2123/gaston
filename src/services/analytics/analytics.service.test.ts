@@ -12,6 +12,8 @@ function makeRepo(overrides: Partial<ISpendingRepository> = {}): ISpendingReposi
     sumByCategoryTree: vi.fn(async () => []),
     sumIncomeTotal: vi.fn(async () => 0),
     sumIncomeByPlatform: vi.fn(async () => []),
+    sumByDay: vi.fn(async () => []),
+    sumIncomeByDayAndPlatform: vi.fn(async () => []),
     ...overrides,
   };
 }

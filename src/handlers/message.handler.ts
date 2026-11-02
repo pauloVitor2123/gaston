@@ -3,6 +3,7 @@ import type {
   IPendingConversationRepository,
   IPlatformRepository,
   IUserRepository,
+  IWorkLogRepository,
 } from "@/types/repository";
 import type { LLMMessage } from "@/types/llm";
 import type { CollectionAgent } from "@/services/collection/collection-agent";
@@ -10,14 +11,18 @@ import {
   type IncomeDraft,
   PLACEHOLDER_DESCRIPTION,
   type TransactionDraft,
+  type WorkLogDraft,
 } from "@/services/collection/draft";
 import type {
   IncomeInput,
   TransactionService,
   TransactionInput,
-  UndoOutcome,
 } from "@/services/transaction/transaction.service";
-import { firstOfMonth, toIsoDate } from "@/services/dates";
+import type { UndoOutcome, UndoService } from "@/services/undo/undo.service";
+import type { WeeklyReportService } from "@/services/metrics/weekly-report.service";
+import type { WorkLogEntry } from "@/services/metrics/weekly-summary";
+import { formatWeekSummary, formatWorkLog } from "@/services/metrics/format";
+import { parseUtcDate, startOfWeek, toIsoDate } from "@/services/dates";
 import type { Clock } from "@/services/clock";
 import type { Category, PendingConversation, Platform, User } from "@/db/schema";
 import { canonicalizePlatform } from "@/services/collection/platform-rules";
@@ -46,6 +51,7 @@ const FALLBACK_CATEGORY_NAME = "Outros";
 const EXAMPLES =
   '• "gastei 90 de gnv"\n' +
   '• "recebi 280 da uber"\n' +
+  '• "rodei 230km, 10h online, 22 corridas"\n' +
   '• "almoço 30 e recebi 300 da 99"\n' +
   '• "quanto ganhei essa semana?"';
 
@@ -60,7 +66,7 @@ const HELP =
   "É só me escrever seus gastos e receitas naturalmente:\n" +
   EXAMPLES +
   "\n\nToda confirmação vem com um botão ↩️ Desfazer, caso algo saia errado.\n\nComandos:\n" +
-  "/status — resumo dos gastos do mês por categoria\n" +
+  "/status — resumo da semana: receita, gastos, lucro, R$/hora, R$/km\n" +
   "/dashboard — link do painel com gráficos e filtros\n" +
   "/cancelar — abandona um registro em andamento\n" +
   "/help — mostra esta ajuda";
@@ -82,14 +88,19 @@ const UNDO_MESSAGES: Record<UndoOutcome, string> = {
 
 type RecordedIncome = IncomeInput & { label: string };
 
+type BatchItems = { drafts: TransactionDraft[]; incomes: IncomeDraft[]; workLogs: WorkLogDraft[] };
+
 export class MessageHandler {
   constructor(
     private readonly userRepo: IUserRepository,
     private readonly categoryRepo: ICategoryRepository,
     private readonly platformRepo: IPlatformRepository,
+    private readonly workLogRepo: IWorkLogRepository,
     private readonly agent: CollectionAgent,
     private readonly transactionService: TransactionService,
+    private readonly undoService: UndoService,
     private readonly analyticsService: AnalyticsService,
+    private readonly weeklyReport: WeeklyReportService,
     private readonly pendingRepo: IPendingConversationRepository,
     private readonly dashboardLink: DashboardLink,
     private readonly clock: Clock,
@@ -112,7 +123,7 @@ export class MessageHandler {
     try {
       const user = await this.userRepo.findByChatId(chatId);
       if (!user) return { text: UNDO_MESSAGES.not_found };
-      const outcome = await this.transactionService.undoBatch(user.id, data.slice(UNDO_PREFIX.length));
+      const outcome = await this.undoService.undo(user.id, data.slice(UNDO_PREFIX.length));
       return { text: UNDO_MESSAGES[outcome] };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -152,31 +163,7 @@ export class MessageHandler {
   }
 
   private async showStatus(userId: number, today: Date): Promise<string> {
-    const report = await this.analyticsService.aggregate(userId, {
-      group_by: "category",
-      from: toIsoDate(firstOfMonth(today)),
-      to: toIsoDate(today),
-    });
-    const month = monthLabel(today);
-
-    if (report.rows.length === 0 || report.totalCents === 0) {
-      return `📊 ${month}\n\nNenhum gasto registrado ainda neste mês.`;
-    }
-
-    const lines = report.rows.flatMap((row) => {
-      const pct = Math.round((row.amountCents / report.totalCents) * 100);
-      const head = `• ${row.label} — ${formatReais(row.amountCents)} (${pct}%)`;
-      const subs = (row.subcategories ?? []).map(
-        (sub) => `   ↳ ${sub.label} — ${formatReais(sub.amountCents)}`,
-      );
-      return [head, ...subs];
-    });
-    return (
-      `📊 ${month} — gastos até hoje\n\n` +
-      `Total: ${formatReais(report.totalCents)}\n\n` +
-      `${lines.join("\n")}\n\n` +
-      "📈 Detalhe e filtros: /dashboard"
-    );
+    return formatWeekSummary(await this.weeklyReport.summarize(userId, today));
   }
 
   private async showDashboard(userId: number, origin: string): Promise<string> {
@@ -218,7 +205,7 @@ export class MessageHandler {
     });
 
     if (turn.kind === "drafts") {
-      if (turn.drafts.length === 1 && turn.incomes.length === 0) {
+      if (turn.drafts.length === 1 && turn.incomes.length === 0 && turn.workLogs.length === 0) {
         const single = turn.drafts[0]!;
         if (isPlaceholderDescription(single.description)) {
           if (pending) await this.pendingRepo.delete(pending.id);
@@ -237,11 +224,14 @@ export class MessageHandler {
         return this.recordDraft(single, user.id, sanitized, today, resolution?.category ?? null, subcategory);
       }
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordBatch(turn.drafts, turn.incomes, user.id, sanitized, today, categories, platforms);
+      return this.recordBatch(turn, user.id, sanitized, today, categories, platforms);
     }
 
     if (turn.kind === "query") {
       if (pending) await this.pendingRepo.delete(pending.id);
+      if (turn.params.subject === "productivity") {
+        return formatWeekSummary(await this.weeklyReport.summarize(user.id, parseUtcDate(turn.params.from)));
+      }
       const report = await this.analyticsService.aggregate(user.id, turn.params);
       return formatSpendingReport(turn.params, report);
     }
@@ -312,20 +302,23 @@ export class MessageHandler {
   }
 
   private async recordBatch(
-    drafts: TransactionDraft[],
-    incomeDrafts: IncomeDraft[],
+    items: BatchItems,
     userId: number,
     rawMessage: string,
     today: Date,
     categories: Category[],
     platforms: Platform[],
   ): Promise<BotReply> {
-    const cappedDrafts = drafts.slice(0, MAX_BATCH_ITEMS);
-    const cappedIncomes = incomeDrafts.slice(0, MAX_BATCH_ITEMS - cappedDrafts.length);
-    const excess = drafts.length + incomeDrafts.length - cappedDrafts.length - cappedIncomes.length;
+    const cappedDrafts = items.drafts.slice(0, MAX_BATCH_ITEMS);
+    const cappedIncomes = items.incomes.slice(0, MAX_BATCH_ITEMS - cappedDrafts.length);
+    const cappedLogs = items.workLogs.slice(0, MAX_BATCH_ITEMS - cappedDrafts.length - cappedIncomes.length);
+    const excess =
+      items.drafts.length + items.incomes.length + items.workLogs.length -
+      cappedDrafts.length - cappedIncomes.length - cappedLogs.length;
     const batchId = this.newBatchId();
     const recorded: TransactionInput[] = [];
     const incomes: RecordedIncome[] = [];
+    const workLogs: WorkLogEntry[] = [];
     const failed: string[] = [];
 
     for (const draft of cappedDrafts) {
@@ -358,21 +351,34 @@ export class MessageHandler {
       }
     }
 
-    const text = this.formatBatchConfirmation(recorded, incomes, failed, excess);
-    const anyRecorded = recorded.length + incomes.length > 0;
+    for (const draft of cappedLogs) {
+      const entry = toWorkLogEntry(draft, today);
+      try {
+        await this.workLogRepo.create({ userId, ...entry, batchId, rawMessage });
+        workLogs.push(entry);
+      } catch (error) {
+        logBatchFailure(error);
+        failed.push("jornada");
+      }
+    }
+
+    const text = this.formatBatchConfirmation(recorded, incomes, workLogs, failed, excess);
+    const anyRecorded = recorded.length + incomes.length + workLogs.length > 0;
     return anyRecorded ? { text, actions: [undoAction(batchId)] } : { text };
   }
 
   private formatBatchConfirmation(
     recorded: TransactionInput[],
     incomes: RecordedIncome[],
+    workLogs: WorkLogEntry[],
     failed: string[],
     excess: number,
   ): string {
-    if (recorded.length + incomes.length === 0) {
+    if (recorded.length + incomes.length + workLogs.length === 0) {
       return "Não consegui registrar isso agora 😕. Pode tentar de novo em instantes?";
     }
-    if (recorded.length === 0 && incomes.length === 1 && failed.length === 0 && excess === 0) {
+    const clean = failed.length === 0 && excess === 0;
+    if (clean && recorded.length === 0 && workLogs.length === 0 && incomes.length === 1) {
       const income = incomes[0]!;
       return `💰 ${income.label} — ${formatReais(income.amount_cents)}`;
     }
@@ -396,6 +402,7 @@ export class MessageHandler {
         lines.push(`• ${income.label} — ${formatReais(income.amount_cents)}`);
       }
     }
+    for (const log of workLogs) lines.push(formatWorkLog(log));
     if (failed.length > 0) {
       lines.push(`⚠️ Não consegui registrar ${failed.length}: ${failed.join(", ")}`);
     }
@@ -490,12 +497,16 @@ function findFallbackCategory(categories: Category[]): Category | null {
   return categories.find((c) => c.name.toLowerCase() === FALLBACK_CATEGORY_NAME.toLowerCase()) ?? null;
 }
 
-function monthLabel(today: Date): string {
-  const names = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-  ];
-  return `${names[today.getUTCMonth()]}/${today.getUTCFullYear()}`;
+function toWorkLogEntry(draft: WorkLogDraft, today: Date): WorkLogEntry {
+  const day = draft.date ? parseUtcDate(draft.date) : today;
+  const period = draft.period ?? "day";
+  return {
+    period,
+    periodStart: period === "week" ? startOfWeek(day) : day,
+    km: draft.km ?? null,
+    onlineMinutes: draft.online_minutes ?? null,
+    rides: draft.rides ?? null,
+  };
 }
 
 function formatSpendingReport(params: QuerySpendingArgs, report: SpendingReport): string {

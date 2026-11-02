@@ -26,6 +26,23 @@ export const incomeDraftSchema = z.object({
 
 export type IncomeDraft = z.infer<typeof incomeDraftSchema>;
 
+export const workLogDraftSchema = z
+  .object({
+    period: z.enum(["day", "week"]).optional(),
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    km: z.number().positive().optional(),
+    online_minutes: z.number().int().positive().optional(),
+    rides: z.number().int().positive().optional(),
+  })
+  .refine((log) => log.km !== undefined || log.online_minutes !== undefined || log.rides !== undefined, {
+    message: "work log needs km, online_minutes or rides",
+  });
+
+export type WorkLogDraft = z.infer<typeof workLogDraftSchema>;
+
 export const PLACEHOLDER_DESCRIPTION = "gasto avulso";
 
 export const MANTRAS = ["Doar", "Se Pagar", "Pagas as Contas"] as const;
@@ -54,4 +71,16 @@ export const RECORD_INCOME_TOOL: ToolDefinition = {
     "se o usuário não disser, deixe em branco e registre — nunca pergunte. " +
     "date: YYYY-MM-DD, só quando o usuário indicar outra data que não hoje; nunca pergunte a data.",
   parameters: toToolParameters(incomeDraftSchema),
+};
+
+export const RECORD_WORK_LOG_TOOL: ToolDefinition = {
+  name: "record_work_log",
+  description:
+    "Registra a jornada do motorista: km rodados, tempo online e/ou número de corridas ('rodei 230km', '10h online', 'fiz 22 corridas'). " +
+    "Preencha só o que o usuário disse; km, online_minutes e rides são independentes. " +
+    "online_minutes em MINUTOS inteiros ('9h' = 540, '8h30' = 510). " +
+    "period: 'week' só quando o usuário falar da semana ('essa semana rodei 1200km'); senão omita (vale o dia). " +
+    "date: YYYY-MM-DD, só quando o usuário indicar outro dia que não hoje ('ontem'); para semana, qualquer dia dela. Nunca pergunte o período nem a data. " +
+    "Pode vir junto de record_transaction/record_income na mesma resposta.",
+  parameters: toToolParameters(workLogDraftSchema),
 };

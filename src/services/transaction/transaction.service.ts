@@ -25,8 +25,6 @@ export interface IncomeInput {
   platform_name?: string;
 }
 
-export type UndoOutcome = "undone" | "already_undone" | "not_found";
-
 const PLATFORMLESS_INCOME_DESCRIPTION = "receita";
 
 export class TransactionService {
@@ -100,11 +98,5 @@ export class TransactionService {
       status: "settled",
       settledAt: this.clock.now(),
     });
-  }
-
-  async undoBatch(userId: number, batchId: string): Promise<UndoOutcome> {
-    const { total, cancelled } = await this.transactionRepo.cancelBatch(userId, batchId);
-    if (total === 0) return "not_found";
-    return cancelled > 0 ? "undone" : "already_undone";
   }
 }

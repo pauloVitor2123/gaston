@@ -5,7 +5,11 @@ import type {
   NewMantra,
   NewPendingConversation,
   NewPlatform,
+  NewWeeklyInsight,
+  NewWorkLog,
   Platform,
+  WeeklyInsight,
+  WorkLog,
   NewTransaction,
   NewUser,
   PendingConversation,
@@ -41,6 +45,18 @@ export interface LabeledAmountRow {
   amountCents: number;
 }
 
+export interface DailyPlatformIncomeRow {
+  date: Date;
+  label: string | null;
+  amountCents: number;
+}
+
+export interface DailyMoneyRow {
+  date: Date;
+  incomeCents: number;
+  expenseCents: number;
+}
+
 export interface CategorySubSpendingRow {
   categoryLabel: string | null;
   subcategoryLabel: string | null;
@@ -57,6 +73,17 @@ export interface ITransactionRepository {
   cancelBatch(userId: number, batchId: string): Promise<BatchCancellation>;
 }
 
+export interface IWeeklyInsightRepository {
+  findByWeek(userId: number, weekStart: Date): Promise<WeeklyInsight | null>;
+  save(data: NewWeeklyInsight): Promise<void>;
+}
+
+export interface IWorkLogRepository {
+  create(data: NewWorkLog): Promise<WorkLog>;
+  listActive(userId: number, from: Date, to: Date): Promise<WorkLog[]>;
+  cancelBatch(userId: number, batchId: string): Promise<BatchCancellation>;
+}
+
 export interface IPlatformRepository {
   create(data: NewPlatform): Promise<Platform>;
   listByUser(userId: number): Promise<Platform[]>;
@@ -67,6 +94,8 @@ export interface ISpendingRepository {
   sumByCategoryTree(filter: SpendingFilter): Promise<CategorySubSpendingRow[]>;
   sumIncomeTotal(filter: SpendingFilter): Promise<number>;
   sumIncomeByPlatform(filter: SpendingFilter): Promise<LabeledAmountRow[]>;
+  sumByDay(filter: SpendingFilter): Promise<DailyMoneyRow[]>;
+  sumIncomeByDayAndPlatform(filter: SpendingFilter): Promise<DailyPlatformIncomeRow[]>;
 }
 
 export interface IPendingConversationRepository {
