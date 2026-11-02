@@ -180,6 +180,11 @@ continua em `docs/` (`invoice-late-charge.md`, `mark-as-paid.md`, [[ADR-002]]).
   responde "botão expirou" **sem agir**. Confirmações em voo continuam ancoradas em
   `pending_conversations` (o botão só referencia; ver [[ADR-001]]). Digitar "sim/não"
   (`affirmationOf`) permanece como fallback e converge no mesmo ponto de resolução.
+  _(Fluxo das confirmações estacionadas; hoje o único botão vivo é o [Desfazer].)_
+- **Lote da mensagem (batch)** — o identificador que amarra **todos** os registros gravados por
+  uma mesma mensagem; é a unidade do [Desfazer]. O toque chega como `data = "undo:<batch>"`,
+  não depende de `pending_conversations` e nunca expira. O adapter acrescenta o resultado ao
+  texto original da confirmação e remove o botão.
 
 ## Tempo
 

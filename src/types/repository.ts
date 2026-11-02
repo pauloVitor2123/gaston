@@ -4,6 +4,8 @@ import type {
   NewCategory,
   NewMantra,
   NewPendingConversation,
+  NewPlatform,
+  Platform,
   NewTransaction,
   NewUser,
   PendingConversation,
@@ -34,19 +36,37 @@ export interface SpendingFilter {
   to: Date;
 }
 
+export interface LabeledAmountRow {
+  label: string | null;
+  amountCents: number;
+}
+
 export interface CategorySubSpendingRow {
   categoryLabel: string | null;
   subcategoryLabel: string | null;
   amountCents: number;
 }
 
+export interface BatchCancellation {
+  total: number;
+  cancelled: number;
+}
+
 export interface ITransactionRepository {
   create(data: NewTransaction): Promise<Transaction>;
+  cancelBatch(userId: number, batchId: string): Promise<BatchCancellation>;
+}
+
+export interface IPlatformRepository {
+  create(data: NewPlatform): Promise<Platform>;
+  listByUser(userId: number): Promise<Platform[]>;
 }
 
 export interface ISpendingRepository {
   sumTotal(filter: SpendingFilter): Promise<number>;
   sumByCategoryTree(filter: SpendingFilter): Promise<CategorySubSpendingRow[]>;
+  sumIncomeTotal(filter: SpendingFilter): Promise<number>;
+  sumIncomeByPlatform(filter: SpendingFilter): Promise<LabeledAmountRow[]>;
 }
 
 export interface IPendingConversationRepository {

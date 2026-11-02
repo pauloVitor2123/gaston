@@ -19,6 +19,7 @@ export interface SpendingReport {
 
 const UNLABELED: Record<SpendingGroupBy, string> = {
   category: "Sem categoria",
+  platform: "Sem plataforma",
   none: "Total",
 };
 
@@ -35,11 +36,22 @@ export class AnalyticsService {
     };
 
     const rows =
-      params.group_by === "category"
-        ? this.categoryTree(await this.spendingRepo.sumByCategoryTree(filter))
-        : this.totalRow(await this.spendingRepo.sumTotal(filter));
+      params.subject === "income" ? await this.incomeRows(params.group_by, filter) : await this.expenseRows(params.group_by, filter);
     const totalCents = rows.reduce((sum, row) => sum + row.amountCents, 0);
     return { rows, totalCents };
+  }
+
+  private async expenseRows(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingBreakdownRow[]> {
+    if (groupBy === "none") return this.totalRow(await this.spendingRepo.sumTotal(filter));
+    return this.categoryTree(await this.spendingRepo.sumByCategoryTree(filter));
+  }
+
+  private async incomeRows(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingBreakdownRow[]> {
+    if (groupBy === "none") return this.totalRow(await this.spendingRepo.sumIncomeTotal(filter));
+    const rows = await this.spendingRepo.sumIncomeByPlatform(filter);
+    return rows
+      .map((row) => ({ label: row.label ?? UNLABELED.platform, amountCents: row.amountCents }))
+      .sort((a, b) => b.amountCents - a.amountCents);
   }
 
   private totalRow(totalCents: number): SpendingBreakdownRow[] {

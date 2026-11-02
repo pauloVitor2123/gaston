@@ -5,6 +5,7 @@ import type { AgentContext } from "@/services/collection/prompts";
 
 const context: AgentContext = {
   categories: [{ name: "Alimentação", subcategories: [] }],
+  platforms: ["Uber", "99"],
   today: "2026-07-31",
 };
 
@@ -29,6 +30,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "almoço", amount_cents: 3500 }],
+      incomes: [],
     });
   });
 
@@ -48,6 +50,7 @@ describe("CollectionAgent.run", () => {
         { description: "gasolina", amount_cents: 10000 },
         { description: "estacionamento", amount_cents: 5000 },
       ],
+      incomes: [],
     });
   });
 
@@ -64,6 +67,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "gasolina", amount_cents: 10000 }],
+      incomes: [],
     });
   });
 
@@ -80,7 +84,38 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "gasolina", amount_cents: 10000 }],
+      incomes: [],
     });
+  });
+
+  it("returns incomes alongside expenses in one records turn", async () => {
+    const { agent } = agentReturning({
+      toolCalls: [
+        { name: "record_transaction", arguments: { description: "gnv", amount_cents: 9000 } },
+        { name: "record_income", arguments: { amount_cents: 28000, platform_name: "Uber" } },
+      ],
+    });
+
+    const turn = await agent.run([{ role: "user", content: "gnv 90 e recebi 280 da uber" }], context);
+
+    expect(turn).toEqual({
+      kind: "drafts",
+      drafts: [{ description: "gnv", amount_cents: 9000 }],
+      incomes: [{ amount_cents: 28000, platform_name: "Uber" }],
+    });
+  });
+
+  it("returns an income-only turn and drops invalid incomes", async () => {
+    const { agent } = agentReturning({
+      toolCalls: [
+        { name: "record_income", arguments: { amount_cents: 30000 } },
+        { name: "record_income", arguments: { platform_name: "99" } },
+      ],
+    });
+
+    const turn = await agent.run([{ role: "user", content: "faturamento 300" }], context);
+
+    expect(turn).toEqual({ kind: "drafts", drafts: [], incomes: [{ amount_cents: 30000 }] });
   });
 
   it("returns a question when the model responds with text", async () => {
@@ -128,8 +163,10 @@ describe("CollectionAgent.run", () => {
     expect(messages).toEqual([{ role: "user", content: "oi" }]);
     expect(tools.map((t: { name: string }) => t.name)).toEqual([
       "record_transaction",
+      "record_income",
       "query_spending",
     ]);
     expect(system).toContain("Alimentação");
+    expect(system).toContain("Uber");
   });
 });

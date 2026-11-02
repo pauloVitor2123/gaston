@@ -12,6 +12,7 @@ import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
 import { CategoryRepository } from "@/repositories/category.repository";
 import { MantraRepository } from "@/repositories/mantra.repository";
+import { PlatformRepository } from "@/repositories/platform.repository";
 import { TransactionRepository } from "@/repositories/transaction.repository";
 import { SpendingRepository } from "@/repositories/spending.repository";
 import { PendingConversationRepository } from "@/repositories/pending-conversation.repository";
@@ -44,6 +45,7 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
   return new MessageHandler(
     userRepo,
     categoryRepo,
+    new PlatformRepository(db),
     agent,
     transactionService,
     analyticsService,

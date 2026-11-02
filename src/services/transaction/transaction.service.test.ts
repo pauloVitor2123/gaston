@@ -140,4 +140,80 @@ describe("TransactionService.persist", () => {
     expect(row.rawMessage).toBe("almoço 35 padaria");
     expect(row.source).toBe("user");
   });
+
+  it("tags the expense with the message batch id", async () => {
+    const { service, repos } = makeService();
+    await service.persist(baseInput, userId, "raw", TODAY, "batch-1");
+
+    expect(created(repos).batchId).toBe("batch-1");
+  });
+});
+
+describe("TransactionService.persistIncome", () => {
+  it("records a settled income with platform, batch and no category or mantra", async () => {
+    const { service, repos } = makeService();
+    await service.persistIncome(
+      { amount_cents: 28000, platform_id: 5, platform_name: "Uber" },
+      userId,
+      "recebi 280 da uber",
+      TODAY,
+      "batch-2",
+    );
+
+    const row = created(repos);
+    expect(row).toMatchObject({
+      direction: "in",
+      description: "Uber",
+      expectedAmountCents: 28000,
+      actualAmountCents: 28000,
+      status: "settled",
+      platformId: 5,
+      batchId: "batch-2",
+      rawMessage: "recebi 280 da uber",
+      accrualDate: TODAY,
+      dueDate: TODAY,
+    });
+    expect(row.categoryId).toBeUndefined();
+    expect(row.mantraId).toBeUndefined();
+    expect(repos.mantraRepo.findByName).not.toHaveBeenCalled();
+  });
+
+  it("describes a platform-less income as receita and honors the given date", async () => {
+    const { service, repos } = makeService();
+    await service.persistIncome({ amount_cents: 30000, date: "2025-01-18" }, userId, "raw", TODAY, "b");
+
+    const row = created(repos);
+    expect(row.description).toBe("receita");
+    expect(row.platformId).toBeUndefined();
+    expect(row.accrualDate).toEqual(new Date(Date.UTC(2025, 0, 18)));
+  });
+});
+
+describe("TransactionService.undoBatch", () => {
+  it("reports undone when it cancelled something", async () => {
+    const { service, repos } = makeService();
+    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
+      .fn()
+      .mockResolvedValue({ total: 2, cancelled: 2 });
+
+    expect(await service.undoBatch(userId, "b1")).toBe("undone");
+  });
+
+  it("reports already_undone when the batch exists but nothing was left to cancel", async () => {
+    const { service, repos } = makeService();
+    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
+      .fn()
+      .mockResolvedValue({ total: 2, cancelled: 0 });
+
+    expect(await service.undoBatch(userId, "b1")).toBe("already_undone");
+  });
+
+  it("reports not_found for an unknown batch", async () => {
+    const { service, repos } = makeService();
+    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
+      .fn()
+      .mockResolvedValue({ total: 0, cancelled: 0 });
+
+    expect(await service.undoBatch(userId, "nope")).toBe("not_found");
+  });
 });

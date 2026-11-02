@@ -10,6 +10,8 @@ function makeRepo(overrides: Partial<ISpendingRepository> = {}): ISpendingReposi
   return {
     sumTotal: vi.fn(async () => 0),
     sumByCategoryTree: vi.fn(async () => []),
+    sumIncomeTotal: vi.fn(async () => 0),
+    sumIncomeByPlatform: vi.fn(async () => []),
     ...overrides,
   };
 }
@@ -80,6 +82,50 @@ describe("AnalyticsService.aggregate", () => {
 
     expect(sumTotal).toHaveBeenCalledOnce();
     expect(report).toEqual({ rows: [{ label: "Total", amountCents: 200000 }], totalCents: 200000 });
+  });
+
+  it("groups income by platform, labeling platform-less income", async () => {
+    const sumIncomeByPlatform = vi.fn(async () => [
+      { label: "Uber", amountCents: 28000 },
+      { label: null, amountCents: 30000 },
+    ]);
+    const service = new AnalyticsService(makeRepo({ sumIncomeByPlatform }));
+
+    const report = await service.aggregate(1, {
+      subject: "income",
+      group_by: "platform",
+      from: "2026-08-01",
+      to: "2026-08-31",
+    });
+
+    expect(report).toEqual({
+      rows: [
+        { label: "Sem plataforma", amountCents: 30000 },
+        { label: "Uber", amountCents: 28000 },
+      ],
+      totalCents: 58000,
+    });
+  });
+
+  it("totals income for group_by 'none'", async () => {
+    const sumIncomeTotal = vi.fn(async () => 58000);
+    const service = new AnalyticsService(makeRepo({ sumIncomeTotal }));
+
+    const report = await service.aggregate(1, { subject: "income", group_by: "none", from: "2026-08-01", to: "2026-08-31" });
+
+    expect(report).toEqual({ rows: [{ label: "Total", amountCents: 58000 }], totalCents: 58000 });
+  });
+
+  it("treats a platform grouping of expenses as the category tree", async () => {
+    const sumByCategoryTree = vi.fn(async () => [
+      { categoryLabel: "Alimentação", subcategoryLabel: null, amountCents: 1000 },
+    ]);
+    const service = new AnalyticsService(makeRepo({ sumByCategoryTree }));
+
+    const report = await service.aggregate(1, { group_by: "platform", from: "2026-08-01", to: "2026-08-31" });
+
+    expect(sumByCategoryTree).toHaveBeenCalledOnce();
+    expect(report.rows[0]!.label).toBe("Alimentação");
   });
 
   it("returns an empty report when 'none' total is zero", async () => {

@@ -2,6 +2,7 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { cards } from "./cards";
 import { categories } from "./categories";
 import { mantras } from "./mantras";
+import { platforms } from "./platforms";
 import { users } from "./users";
 
 export const cardInvoices = sqliteTable("card_invoices", {
@@ -76,6 +77,8 @@ export const transactions = sqliteTable(
     categoryId: integer("category_id").references(() => categories.id),
     subcategoryId: integer("subcategory_id").references(() => categories.id),
     mantraId: integer("mantra_id").references(() => mantras.id),
+    platformId: integer("platform_id").references(() => platforms.id),
+    batchId: text("batch_id"),
     source: text("source", { enum: ["user", "installment", "recurring"] })
       .notNull()
       .default("user"),
@@ -91,6 +94,7 @@ export const transactions = sqliteTable(
     idxUserAccrual: index("idx_tx_user_accrual").on(t.userId, t.accrualDate),
     idxInvoice: index("idx_tx_invoice").on(t.cardInvoiceId),
     idxStatusDue: index("idx_tx_status_due").on(t.status, t.dueDate),
+    idxUserBatch: index("idx_tx_user_batch").on(t.userId, t.batchId),
   }),
 );
 

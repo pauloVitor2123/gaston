@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ICategoryRepository,
   IPendingConversationRepository,
+  IPlatformRepository,
   IUserRepository,
 } from "@/types/repository";
 import type { AgentTurn, CollectionAgent } from "@/services/collection/collection-agent";
 import { PLACEHOLDER_DESCRIPTION, type TransactionDraft } from "@/services/collection/draft";
 import type { TransactionService } from "@/services/transaction/transaction.service";
 import type { AnalyticsService, SpendingReport } from "@/services/analytics/analytics.service";
-import type { Category, PendingConversation, Transaction, User } from "@/db/schema";
+import type { Category, PendingConversation, Platform, Transaction, User } from "@/db/schema";
 import { MessageHandler } from "@/handlers/message.handler";
 import { DashboardLink } from "@/services/dashboard/token";
 import { FixedClock } from "@/services/clock";
@@ -33,7 +34,15 @@ const mockCategories: Category[] = [
   { id: 4, userId: 1, name: "Combustível", synonyms: ["gasolina", "gnv"], parentId: 3 } as Category,
 ];
 
+const mockPlatforms: Platform[] = [
+  { id: 10, userId: 1, name: "Uber", synonyms: ["uber"] },
+  { id: 11, userId: 1, name: "99", synonyms: ["99", "99pop"] },
+];
+
 const mockTransaction = { id: 99, userId: 1 } as Transaction;
+
+const BATCH_ID = "batch-fixed";
+const UNDO = { id: `undo:${BATCH_ID}`, label: "↩️ Desfazer" };
 
 const fullDraft: TransactionDraft = {
   description: "almoço",
@@ -56,6 +65,10 @@ function makeRepos(overrides: {
       listByUser: vi.fn().mockResolvedValue(mockCategories),
       findByNameOrSynonym: vi.fn(),
     } as unknown as ICategoryRepository,
+    platformRepo: {
+      listByUser: vi.fn().mockResolvedValue(mockPlatforms),
+      create: vi.fn().mockImplementation(async (data: { name: string }) => ({ id: 50, userId: 1, synonyms: [], ...data })),
+    } as unknown as IPlatformRepository,
     pendingRepo: {
       findActiveByUser: vi
         .fn()
@@ -68,7 +81,7 @@ function makeRepos(overrides: {
 }
 
 function makeHandler(
-  turn: AgentTurn = { kind: "drafts", drafts: [fullDraft] },
+  turn: AgentTurn = { kind: "drafts", drafts: [fullDraft], incomes: [] },
   repoOverrides: Parameters<typeof makeRepos>[0] = {},
   report: SpendingReport = { rows: [], totalCents: 0 },
 ) {
@@ -76,6 +89,8 @@ function makeHandler(
   const agent = { run: vi.fn().mockResolvedValue(turn) } as unknown as CollectionAgent;
   const transactionService = {
     persist: vi.fn().mockResolvedValue(mockTransaction),
+    persistIncome: vi.fn().mockResolvedValue(mockTransaction),
+    undoBatch: vi.fn().mockResolvedValue("undone"),
   } as unknown as TransactionService;
   const analytics = {
     aggregate: vi.fn().mockResolvedValue(report),
@@ -85,12 +100,14 @@ function makeHandler(
   const handler = new MessageHandler(
     repos.userRepo,
     repos.categoryRepo,
+    repos.platformRepo,
     agent,
     transactionService,
     analytics,
     repos.pendingRepo,
     dashboardLink,
     new FixedClock(NOW),
+    () => BATCH_ID,
   );
   return { handler, repos, agent, transactionService, analytics };
 }
@@ -134,6 +151,7 @@ describe("MessageHandler — record flow", () => {
   it("resolves the subcategory from the description and shows it in the confirmation", async () => {
     const { handler, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [{ description: "gasolina", amount_cents: 10000 }],
     });
 
@@ -148,6 +166,7 @@ describe("MessageHandler — record flow", () => {
   it("reuses an existing subcategory proposed by the LLM when the description matches none", async () => {
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [
         { description: "paguei 30", amount_cents: 3000, category_name: "Transporte", subcategory_name: "Combustível" },
       ],
@@ -165,6 +184,7 @@ describe("MessageHandler — record flow", () => {
     const created = { id: 77, userId: 1, name: "Pedágio", synonyms: [], parentId: 3 } as Category;
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [
         { description: "paguei 30", amount_cents: 3000, category_name: "Transporte", subcategory_name: "Pedágio" },
       ],
@@ -186,6 +206,7 @@ describe("MessageHandler — record flow", () => {
   it("asks for a category when it cannot be resolved and saves the draft", async () => {
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [{ description: "coisa aleatória", amount_cents: 5000 }],
     });
 
@@ -200,6 +221,7 @@ describe("MessageHandler — record flow", () => {
   it("records a value-only expense under Outros without asking", async () => {
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [{ description: PLACEHOLDER_DESCRIPTION, amount_cents: 5000 }],
     });
 
@@ -221,6 +243,7 @@ describe("MessageHandler — record flow", () => {
   it("treats a capitalized/padded placeholder as value-only", async () => {
     const { handler, repos, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [{ description: "  Gasto Avulso  ", amount_cents: 5000 }],
     });
 
@@ -234,7 +257,7 @@ describe("MessageHandler — record flow", () => {
 
   it("resolves the category from a follow-up message on the saved draft", async () => {
     const { handler, transactionService } = makeHandler(
-      { kind: "drafts", drafts: [{ description: "almoço", amount_cents: 3500, category_name: "Alimentação" }] },
+      { kind: "drafts", drafts: [{ description: "almoço", amount_cents: 3500, category_name: "Alimentação" }], incomes: [] },
       { findActiveByUser: () => Promise.resolve(pendingDraft(7, 1)) },
     );
 
@@ -248,6 +271,7 @@ describe("MessageHandler — record flow", () => {
 describe("MessageHandler — batch flow", () => {
   const batchTurn: AgentTurn = {
     kind: "drafts",
+      incomes: [],
     drafts: [
       { description: "gasolina", amount_cents: 10000, category_name: "Alimentação" },
       { description: "estacionamento", amount_cents: 5000 },
@@ -278,6 +302,7 @@ describe("MessageHandler — batch flow", () => {
   it("assigns a subcategory per item and leaves unmatched items without one", async () => {
     const { handler, transactionService } = makeHandler({
       kind: "drafts",
+      incomes: [],
       drafts: [
         { description: "gasolina", amount_cents: 10000 },
         { description: "estacionamento", amount_cents: 5000 },
@@ -325,12 +350,139 @@ describe("MessageHandler — batch flow", () => {
       amount_cents: 100,
       category_name: "Alimentação",
     }));
-    const { handler, transactionService } = makeHandler({ kind: "drafts", drafts });
+    const { handler, transactionService } = makeHandler({ kind: "drafts", drafts, incomes: [] });
 
     const reply = await handler.handle(100, "muitos gastos", "Test", ORIGIN);
 
     expect(transactionService.persist).toHaveBeenCalledTimes(10);
     expect(reply.text).toContain("Ignorei 2");
+  });
+});
+
+describe("MessageHandler — income and undo", () => {
+  it("offers an undo button tied to the message batch on a single expense", async () => {
+    const { handler, transactionService } = makeHandler();
+
+    const reply = await handler.handle(100, "almoço 35", "Test", ORIGIN);
+
+    expect(reply.actions).toEqual([UNDO]);
+    const persistCall = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(persistCall[4]).toBe(BATCH_ID);
+  });
+
+  it("records an income on a known platform and confirms it with undo", async () => {
+    const { handler, transactionService, repos } = makeHandler({
+      kind: "drafts",
+      drafts: [],
+      incomes: [{ amount_cents: 28000, platform_name: "uber" }],
+    });
+
+    const reply = await handler.handle(100, "recebi 280 da uber", "Test", ORIGIN);
+
+    expect(repos.platformRepo.create).not.toHaveBeenCalled();
+    expect(transactionService.persistIncome).toHaveBeenCalledWith(
+      { amount_cents: 28000, date: undefined, platform_id: 10, platform_name: "Uber" },
+      1,
+      "recebi 280 da uber",
+      expect.any(Date),
+      BATCH_ID,
+    );
+    expect(reply.text).toBe("💰 Receita Uber — R$ 280,00");
+    expect(reply.actions).toEqual([UNDO]);
+  });
+
+  it("records a platform-less income without asking", async () => {
+    const { handler, transactionService, repos } = makeHandler({
+      kind: "drafts",
+      drafts: [],
+      incomes: [{ amount_cents: 30000 }],
+    });
+
+    const reply = await handler.handle(100, "faturamento 300", "Test", ORIGIN);
+
+    expect(repos.pendingRepo.create).not.toHaveBeenCalled();
+    const [input] = (transactionService.persistIncome as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(input.platform_id).toBeUndefined();
+    expect(reply.text).toBe("💰 Receita — R$ 300,00");
+  });
+
+  it("creates a new platform once even when it appears twice in the same message", async () => {
+    const { handler, repos, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [],
+      incomes: [
+        { amount_cents: 10000, platform_name: "InDrive" },
+        { amount_cents: 5000, platform_name: "indrive" },
+      ],
+    });
+
+    await handler.handle(100, "indrive 100 e indrive 50", "Test", ORIGIN);
+
+    expect(repos.platformRepo.create).toHaveBeenCalledOnce();
+    expect(repos.platformRepo.create).toHaveBeenCalledWith({ userId: 1, name: "InDrive", synonyms: [] });
+    const calls = (transactionService.persistIncome as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map((c) => c[0].platform_id)).toEqual([50, 50]);
+  });
+
+  it("records a mixed message as one batch with one undo button", async () => {
+    const { handler, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [
+        { description: "gnv", amount_cents: 9000 },
+        { description: "almoço", amount_cents: 3000, category_name: "Alimentação" },
+      ],
+      incomes: [{ amount_cents: 28000, platform_name: "Uber" }],
+    });
+
+    const reply = await handler.handle(100, "gnv 90, almoço 30 e recebi 280 da uber", "Test", ORIGIN);
+
+    expect(transactionService.persist).toHaveBeenCalledTimes(2);
+    expect(transactionService.persistIncome).toHaveBeenCalledOnce();
+    const persistBatchIds = (transactionService.persist as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[4]);
+    expect(persistBatchIds).toEqual([BATCH_ID, BATCH_ID]);
+    expect(reply.text).toContain("2 gastos registrados — R$ 120,00");
+    expect(reply.text).toContain("1 receita registrada — R$ 280,00");
+    expect(reply.text).toContain("Receita Uber — R$ 280,00");
+    expect(reply.actions).toEqual([UNDO]);
+  });
+
+  it("does not offer undo when nothing could be recorded", async () => {
+    const { handler, transactionService } = makeHandler({
+      kind: "drafts",
+      drafts: [],
+      incomes: [{ amount_cents: 28000, platform_name: "Uber" }],
+    });
+    (transactionService.persistIncome as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("db down"));
+
+    const reply = await handler.handle(100, "recebi 280 da uber", "Test", ORIGIN);
+
+    expect(reply.text).toContain("Não consegui registrar");
+    expect(reply.actions).toBeUndefined();
+  });
+
+  it("undoes the batch named in the callback", async () => {
+    const { handler, transactionService } = makeHandler();
+
+    const reply = await handler.handleCallback(100, `undo:${BATCH_ID}`);
+
+    expect(transactionService.undoBatch).toHaveBeenCalledWith(1, BATCH_ID);
+    expect(reply?.text).toContain("Desfeito");
+  });
+
+  it("says when the batch was already undone", async () => {
+    const { handler, transactionService } = makeHandler();
+    (transactionService.undoBatch as ReturnType<typeof vi.fn>).mockResolvedValue("already_undone");
+
+    const reply = await handler.handleCallback(100, `undo:${BATCH_ID}`);
+
+    expect(reply?.text).toContain("já tinha sido desfeito");
+  });
+
+  it("ignores callbacks it does not own", async () => {
+    const { handler, transactionService } = makeHandler();
+
+    expect(await handler.handleCallback(100, "7:yes")).toBeNull();
+    expect(transactionService.undoBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -351,6 +503,28 @@ describe("MessageHandler — query flow", () => {
     });
     expect(reply.text).toContain("Alimentação — R$ 450,00");
     expect(reply.text).toContain("Total: R$ 450,00");
+  });
+
+  it("formats an income-by-platform report", async () => {
+    const params = { subject: "income" as const, group_by: "platform" as const, from: "2026-08-01", to: "2026-08-31" };
+    const { handler, analytics } = makeHandler(
+      { kind: "query", params },
+      {},
+      {
+        rows: [
+          { label: "Uber", amountCents: 28000 },
+          { label: "99", amountCents: 30000 },
+        ],
+        totalCents: 58000,
+      },
+    );
+
+    const reply = await handler.handle(100, "quanto ganhei por app esse mês?", "Test", ORIGIN);
+
+    expect(analytics.aggregate).toHaveBeenCalledWith(1, params);
+    expect(reply.text).toContain("💰 Receitas 2026-08-01 → 2026-08-31");
+    expect(reply.text).toContain("Uber — R$ 280,00");
+    expect(reply.text).toContain("Total: R$ 580,00");
   });
 
   it("indents subcategories in a category query report", async () => {

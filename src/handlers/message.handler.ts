@@ -1,15 +1,26 @@
 import type {
   ICategoryRepository,
   IPendingConversationRepository,
+  IPlatformRepository,
   IUserRepository,
 } from "@/types/repository";
 import type { LLMMessage } from "@/types/llm";
 import type { CollectionAgent } from "@/services/collection/collection-agent";
-import { PLACEHOLDER_DESCRIPTION, type TransactionDraft } from "@/services/collection/draft";
-import type { TransactionService, TransactionInput } from "@/services/transaction/transaction.service";
-import { firstOfMonth, parseUtcDate, toIsoDate } from "@/services/dates";
+import {
+  type IncomeDraft,
+  PLACEHOLDER_DESCRIPTION,
+  type TransactionDraft,
+} from "@/services/collection/draft";
+import type {
+  IncomeInput,
+  TransactionService,
+  TransactionInput,
+  UndoOutcome,
+} from "@/services/transaction/transaction.service";
+import { firstOfMonth, toIsoDate } from "@/services/dates";
 import type { Clock } from "@/services/clock";
-import type { Category, PendingConversation, User } from "@/db/schema";
+import type { Category, PendingConversation, Platform, User } from "@/db/schema";
+import { canonicalizePlatform } from "@/services/collection/platform-rules";
 import { sanitizeUserMessage } from "@/services/collection/sanitize";
 import { applyMantraRules } from "@/services/collection/mantra-rules";
 import {
@@ -22,7 +33,7 @@ import type { AnalyticsService, SpendingReport } from "@/services/analytics/anal
 import type { QuerySpendingArgs } from "@/services/analytics/query";
 import type { DashboardLink } from "@/services/dashboard/token";
 import { formatReais } from "@/services/money";
-import type { BotReply } from "@/handlers/reply";
+import type { BotReply, ReplyAction } from "@/handlers/reply";
 
 type DraftState = { kind: "draft"; messages: LLMMessage[]; cycles: number };
 
@@ -33,22 +44,22 @@ const MAX_BATCH_ITEMS = 10;
 const FALLBACK_CATEGORY_NAME = "Outros";
 
 const EXAMPLES =
-  '• "gastei 20 na padaria"\n' +
-  '• "uber 10"\n' +
-  '• "mercado 130 ontem"\n' +
-  '• "quanto gastei esse mês?"';
+  '• "gastei 90 de gnv"\n' +
+  '• "recebi 280 da uber"\n' +
+  '• "almoço 30 e recebi 300 da 99"\n' +
+  '• "quanto ganhei essa semana?"';
 
 const ONBOARDING =
-  "Oi! Sou o Gaston, seu registrador de gastos 💸\n\n" +
-  "Me conte seus gastos em linguagem natural, por exemplo:\n" +
+  "Oi! Sou o Gaston, o caixa do seu dia de motorista 🚗💸\n\n" +
+  "Me conte o que gastou e o que recebeu em linguagem natural, por exemplo:\n" +
   EXAMPLES +
   "\n\nMande /help pra ver tudo que eu faço.";
 
 const HELP =
   "🐷 Gaston — o que eu faço\n\n" +
-  "É só me escrever seus gastos naturalmente:\n" +
+  "É só me escrever seus gastos e receitas naturalmente:\n" +
   EXAMPLES +
-  "\n\nComandos:\n" +
+  "\n\nToda confirmação vem com um botão ↩️ Desfazer, caso algo saia errado.\n\nComandos:\n" +
   "/status — resumo dos gastos do mês por categoria\n" +
   "/dashboard — link do painel com gráficos e filtros\n" +
   "/cancelar — abandona um registro em andamento\n" +
@@ -60,21 +71,35 @@ const GENERIC_ERROR =
 const CYCLE_PAUSE =
   "\n\nVou deixar esse registro guardado por aqui. Quando quiser continuar, é só me mandar o que falta. 👍";
 
+const UNDO_PREFIX = "undo:";
+const UNDO_LABEL = "↩️ Desfazer";
+
+const UNDO_MESSAGES: Record<UndoOutcome, string> = {
+  undone: "↩️ Desfeito — isso não conta mais nos totais.",
+  already_undone: "↩️ Isso já tinha sido desfeito.",
+  not_found: "Não encontrei esse registro para desfazer.",
+};
+
+type RecordedIncome = IncomeInput & { label: string };
+
 export class MessageHandler {
   constructor(
     private readonly userRepo: IUserRepository,
     private readonly categoryRepo: ICategoryRepository,
+    private readonly platformRepo: IPlatformRepository,
     private readonly agent: CollectionAgent,
     private readonly transactionService: TransactionService,
     private readonly analyticsService: AnalyticsService,
     private readonly pendingRepo: IPendingConversationRepository,
     private readonly dashboardLink: DashboardLink,
     private readonly clock: Clock,
+    private readonly newBatchId: () => string = () => crypto.randomUUID(),
   ) {}
 
   async handle(chatId: number, text: string, senderName: string, origin: string): Promise<BotReply> {
     try {
-      return { text: await this.route(chatId, text, senderName, origin) };
+      const reply = await this.route(chatId, text, senderName, origin);
+      return typeof reply === "string" ? { text: reply } : reply;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`MessageHandler.handle failed: ${detail}`, error);
@@ -82,7 +107,21 @@ export class MessageHandler {
     }
   }
 
-  private async route(chatId: number, text: string, senderName: string, origin: string): Promise<string> {
+  async handleCallback(chatId: number, data: string): Promise<BotReply | null> {
+    if (!data.startsWith(UNDO_PREFIX)) return null;
+    try {
+      const user = await this.userRepo.findByChatId(chatId);
+      if (!user) return { text: UNDO_MESSAGES.not_found };
+      const outcome = await this.transactionService.undoBatch(user.id, data.slice(UNDO_PREFIX.length));
+      return { text: UNDO_MESSAGES[outcome] };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`MessageHandler.handleCallback failed: ${detail}`, error);
+      return { text: GENERIC_ERROR };
+    }
+  }
+
+  private async route(chatId: number, text: string, senderName: string, origin: string): Promise<BotReply | string> {
     const user = await this.resolveUser(chatId, senderName);
     const today = this.clock.today(user.timezone);
     const command = commandOf(text);
@@ -157,9 +196,12 @@ export class MessageHandler {
     draft: DraftState | null,
     pending: PendingConversation | null,
     today: Date,
-  ): Promise<string> {
+  ): Promise<BotReply | string> {
     const sanitized = sanitizeUserMessage(text);
-    const categories = await this.categoryRepo.listByUser(user.id);
+    const [categories, platforms] = await Promise.all([
+      this.categoryRepo.listByUser(user.id),
+      this.platformRepo.listByUser(user.id),
+    ]);
 
     const messages: LLMMessage[] = [
       ...(draft?.messages ?? []),
@@ -171,11 +213,12 @@ export class MessageHandler {
         name: c.name,
         subcategories: categories.filter((s) => s.parentId === c.id).map((s) => s.name),
       })),
+      platforms: platforms.map((p) => p.name),
       today: toIsoDate(today),
     });
 
     if (turn.kind === "drafts") {
-      if (turn.drafts.length === 1) {
+      if (turn.drafts.length === 1 && turn.incomes.length === 0) {
         const single = turn.drafts[0]!;
         if (isPlaceholderDescription(single.description)) {
           if (pending) await this.pendingRepo.delete(pending.id);
@@ -194,7 +237,7 @@ export class MessageHandler {
         return this.recordDraft(single, user.id, sanitized, today, resolution?.category ?? null, subcategory);
       }
       if (pending) await this.pendingRepo.delete(pending.id);
-      return this.recordBatch(turn.drafts, user.id, sanitized, today, categories);
+      return this.recordBatch(turn.drafts, turn.incomes, user.id, sanitized, today, categories, platforms);
     }
 
     if (turn.kind === "query") {
@@ -214,10 +257,11 @@ export class MessageHandler {
     today: Date,
     category: Category | null,
     subcategory: Category | null,
-  ): Promise<string> {
+  ): Promise<BotReply> {
     const input = toTransactionInput(draft, category, subcategory);
-    await this.transactionService.persist(input, userId, rawMessage, today);
-    return this.formatConfirmation(input);
+    const batchId = this.newBatchId();
+    await this.transactionService.persist(input, userId, rawMessage, today, batchId);
+    return { text: this.formatConfirmation(input), actions: [undoAction(batchId)] };
   }
 
   private async resolveBatchItem(
@@ -254,53 +298,106 @@ export class MessageHandler {
     return null;
   }
 
+  private async resolvePlatform(
+    draft: IncomeDraft,
+    userId: number,
+    platforms: Platform[],
+  ): Promise<Platform | null> {
+    const match = canonicalizePlatform(draft.platform_name, platforms);
+    if (match.kind === "existing") return match.platform;
+    if (match.kind === "none") return null;
+    const created = await this.platformRepo.create({ userId, name: match.name, synonyms: [] });
+    platforms.push(created);
+    return created;
+  }
+
   private async recordBatch(
     drafts: TransactionDraft[],
+    incomeDrafts: IncomeDraft[],
     userId: number,
     rawMessage: string,
     today: Date,
     categories: Category[],
-  ): Promise<string> {
-    const capped = drafts.slice(0, MAX_BATCH_ITEMS);
-    const excess = drafts.length - capped.length;
+    platforms: Platform[],
+  ): Promise<BotReply> {
+    const cappedDrafts = drafts.slice(0, MAX_BATCH_ITEMS);
+    const cappedIncomes = incomeDrafts.slice(0, MAX_BATCH_ITEMS - cappedDrafts.length);
+    const excess = drafts.length + incomeDrafts.length - cappedDrafts.length - cappedIncomes.length;
+    const batchId = this.newBatchId();
     const recorded: TransactionInput[] = [];
-    const failed: TransactionInput[] = [];
+    const incomes: RecordedIncome[] = [];
+    const failed: string[] = [];
 
-    for (const draft of capped) {
+    for (const draft of cappedDrafts) {
       const { category, subcategory } = await this.resolveBatchItem(draft, userId, categories);
       const input = toTransactionInput(draft, category, subcategory);
       try {
-        await this.transactionService.persist(input, userId, rawMessage, today);
+        await this.transactionService.persist(input, userId, rawMessage, today, batchId);
         recorded.push(input);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error(`MessageHandler.recordBatch persist failed: ${detail}`, error);
-        failed.push(input);
+        logBatchFailure(error);
+        failed.push(capitalize(input.description));
       }
     }
 
-    return this.formatBatchConfirmation(recorded, failed, excess);
+    for (const draft of cappedIncomes) {
+      const label = incomeLabel(draft.platform_name);
+      try {
+        const platform = await this.resolvePlatform(draft, userId, platforms);
+        const input: IncomeInput = {
+          amount_cents: draft.amount_cents,
+          date: draft.date,
+          platform_id: platform?.id,
+          platform_name: platform?.name,
+        };
+        await this.transactionService.persistIncome(input, userId, rawMessage, today, batchId);
+        incomes.push({ ...input, label: incomeLabel(platform?.name) });
+      } catch (error) {
+        logBatchFailure(error);
+        failed.push(label);
+      }
+    }
+
+    const text = this.formatBatchConfirmation(recorded, incomes, failed, excess);
+    const anyRecorded = recorded.length + incomes.length > 0;
+    return anyRecorded ? { text, actions: [undoAction(batchId)] } : { text };
   }
 
   private formatBatchConfirmation(
     recorded: TransactionInput[],
-    failed: TransactionInput[],
+    incomes: RecordedIncome[],
+    failed: string[],
     excess: number,
   ): string {
-    if (recorded.length === 0) {
-      return "Não consegui registrar esses gastos agora 😕. Pode tentar de novo em instantes?";
+    if (recorded.length + incomes.length === 0) {
+      return "Não consegui registrar isso agora 😕. Pode tentar de novo em instantes?";
+    }
+    if (recorded.length === 0 && incomes.length === 1 && failed.length === 0 && excess === 0) {
+      const income = incomes[0]!;
+      return `💰 ${income.label} — ${formatReais(income.amount_cents)}`;
     }
 
-    const total = recorded.reduce((sum, input) => sum + input.amount_cents, 0);
-    const noun = recorded.length === 1 ? "gasto registrado" : "gastos registrados";
-    const lines = [`✅ ${recorded.length} ${noun} — ${formatReais(total)}`];
-    for (const input of recorded) {
-      const description = capitalize(input.description);
-      const category = input.category_name ? ` · 📁 ${input.category_name}` : "";
-      lines.push(`• ${description} — ${formatReais(input.amount_cents)}${category}`);
+    const lines: string[] = [];
+    if (recorded.length > 0) {
+      const total = recorded.reduce((sum, input) => sum + input.amount_cents, 0);
+      const noun = recorded.length === 1 ? "gasto registrado" : "gastos registrados";
+      lines.push(`✅ ${recorded.length} ${noun} — ${formatReais(total)}`);
+      for (const input of recorded) {
+        const description = capitalize(input.description);
+        const category = input.category_name ? ` · 📁 ${input.category_name}` : "";
+        lines.push(`• ${description} — ${formatReais(input.amount_cents)}${category}`);
+      }
+    }
+    if (incomes.length > 0) {
+      const total = incomes.reduce((sum, income) => sum + income.amount_cents, 0);
+      const noun = incomes.length === 1 ? "receita registrada" : "receitas registradas";
+      lines.push(`💰 ${incomes.length} ${noun} — ${formatReais(total)}`);
+      for (const income of incomes) {
+        lines.push(`• ${income.label} — ${formatReais(income.amount_cents)}`);
+      }
     }
     if (failed.length > 0) {
-      lines.push(`⚠️ Não consegui registrar ${failed.length}: ${failed.map((i) => capitalize(i.description)).join(", ")}`);
+      lines.push(`⚠️ Não consegui registrar ${failed.length}: ${failed.join(", ")}`);
     }
     if (excess > 0) {
       lines.push(`⚠️ Ignorei ${excess} além do limite de ${MAX_BATCH_ITEMS} por mensagem.`);
@@ -348,6 +445,19 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+function undoAction(batchId: string): ReplyAction {
+  return { id: `${UNDO_PREFIX}${batchId}`, label: UNDO_LABEL };
+}
+
+function incomeLabel(platformName: string | undefined): string {
+  return platformName ? `Receita ${platformName}` : "Receita";
+}
+
+function logBatchFailure(error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(`MessageHandler.recordBatch persist failed: ${detail}`, error);
+}
+
 function toTransactionInput(
   draft: TransactionDraft,
   category: Category | null,
@@ -390,7 +500,7 @@ function monthLabel(today: Date): string {
 
 function formatSpendingReport(params: QuerySpendingArgs, report: SpendingReport): string {
   const period = `${params.from} → ${params.to}`;
-  const header = `📊 Gastos ${period}`;
+  const header = params.subject === "income" ? `💰 Receitas ${period}` : `📊 Gastos ${period}`;
 
   if (report.rows.length === 0 || report.totalCents === 0) {
     return `${header}\n\nNada encontrado nesse período.`;

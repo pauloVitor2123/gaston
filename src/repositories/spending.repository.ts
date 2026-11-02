@@ -1,24 +1,27 @@
 import { and, eq, gte, lt, ne, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { alias } from "drizzle-orm/sqlite-core";
-import { categories, transactions } from "@/db/schema";
+import { categories, platforms, transactions } from "@/db/schema";
 import type {
   CategorySubSpendingRow,
   ISpendingRepository,
+  LabeledAmountRow,
   SpendingFilter,
 } from "@/types/repository";
 
 const subcategoriesTable = alias(categories, "subcategories");
 
+type Direction = "in" | "out";
+
 export class SpendingRepository implements ISpendingRepository {
   constructor(private readonly db: DrizzleD1Database) {}
 
   async sumTotal(filter: SpendingFilter): Promise<number> {
-    const [row] = await this.db
-      .select({ amountCents: amount() })
-      .from(transactions)
-      .where(scope(filter));
-    return row?.amountCents ?? 0;
+    return this.total(filter, "out");
+  }
+
+  async sumIncomeTotal(filter: SpendingFilter): Promise<number> {
+    return this.total(filter, "in");
   }
 
   async sumByCategoryTree(filter: SpendingFilter): Promise<CategorySubSpendingRow[]> {
@@ -31,7 +34,7 @@ export class SpendingRepository implements ISpendingRepository {
       .from(transactions)
       .leftJoin(categories, eq(transactions.categoryId, categories.id))
       .leftJoin(subcategoriesTable, eq(transactions.subcategoryId, subcategoriesTable.id))
-      .where(scope(filter))
+      .where(scope(filter, "out"))
       .groupBy(categories.id, subcategoriesTable.id);
     return rows.map((r) => ({
       categoryLabel: r.categoryLabel,
@@ -39,17 +42,35 @@ export class SpendingRepository implements ISpendingRepository {
       amountCents: r.amountCents,
     }));
   }
+
+  async sumIncomeByPlatform(filter: SpendingFilter): Promise<LabeledAmountRow[]> {
+    const rows = await this.db
+      .select({ label: platforms.name, amountCents: amount() })
+      .from(transactions)
+      .leftJoin(platforms, eq(transactions.platformId, platforms.id))
+      .where(scope(filter, "in"))
+      .groupBy(platforms.id);
+    return rows.map((r) => ({ label: r.label, amountCents: r.amountCents }));
+  }
+
+  private async total(filter: SpendingFilter, direction: Direction): Promise<number> {
+    const [row] = await this.db
+      .select({ amountCents: amount() })
+      .from(transactions)
+      .where(scope(filter, direction));
+    return row?.amountCents ?? 0;
+  }
 }
 
 function amount(): SQL<number> {
   return sql<number>`sum(coalesce(${transactions.actualAmountCents}, ${transactions.expectedAmountCents}))`;
 }
 
-function scope(filter: SpendingFilter): SQL | undefined {
+function scope(filter: SpendingFilter, direction: Direction): SQL | undefined {
   return and(
     eq(transactions.userId, filter.userId),
     ne(transactions.status, "cancelled"),
-    eq(transactions.direction, "out"),
+    eq(transactions.direction, direction),
     gte(transactions.dueDate, filter.from),
     lt(transactions.dueDate, filter.to),
   );

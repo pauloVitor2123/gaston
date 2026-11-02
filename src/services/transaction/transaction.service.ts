@@ -18,6 +18,17 @@ export interface TransactionInput {
   mantra?: Mantra;
 }
 
+export interface IncomeInput {
+  amount_cents: number;
+  date?: string;
+  platform_id?: number;
+  platform_name?: string;
+}
+
+export type UndoOutcome = "undone" | "already_undone" | "not_found";
+
+const PLATFORMLESS_INCOME_DESCRIPTION = "receita";
+
 export class TransactionService {
   constructor(
     private readonly categoryRepo: ICategoryRepository,
@@ -31,6 +42,7 @@ export class TransactionService {
     userId: number,
     rawMessage: string,
     today: Date,
+    batchId?: string,
   ): Promise<Transaction> {
     const accrualDate = input.date ? parseUtcDate(input.date) : today;
 
@@ -56,10 +68,43 @@ export class TransactionService {
       categoryId: category?.id,
       subcategoryId: input.subcategory_id,
       mantraId: mantra?.id,
+      batchId,
       source: "user",
       rawMessage,
       status: "settled",
       settledAt: now,
     });
+  }
+
+  async persistIncome(
+    input: IncomeInput,
+    userId: number,
+    rawMessage: string,
+    today: Date,
+    batchId: string,
+  ): Promise<Transaction> {
+    const accrualDate = input.date ? parseUtcDate(input.date) : today;
+    return this.transactionRepo.create({
+      userId,
+      direction: "in",
+      description: input.platform_name ?? PLATFORMLESS_INCOME_DESCRIPTION,
+      expectedAmountCents: input.amount_cents,
+      actualAmountCents: input.amount_cents,
+      accrualDate,
+      dueDate: accrualDate,
+      paymentMethod: "cash",
+      platformId: input.platform_id,
+      batchId,
+      source: "user",
+      rawMessage,
+      status: "settled",
+      settledAt: this.clock.now(),
+    });
+  }
+
+  async undoBatch(userId: number, batchId: string): Promise<UndoOutcome> {
+    const { total, cancelled } = await this.transactionRepo.cancelBatch(userId, batchId);
+    if (total === 0) return "not_found";
+    return cancelled > 0 ? "undone" : "already_undone";
   }
 }
