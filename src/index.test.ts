@@ -43,6 +43,24 @@ describe("worker fetch", () => {
     expect(report.days).toHaveLength(7);
   });
 
+  it("GET /api/insights for a week without data answers insufficient_data", async () => {
+    const token = await signToken(2, SECRET, new Date());
+    const res = await SELF.fetch(`https://gaston.test/api/insights?u=2&t=${token}&week=2026-10-29`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "insufficient_data" });
+  });
+
+  it("GET /api/insights only accepts a week", async () => {
+    const token = await signToken(2, SECRET, new Date());
+    const res = await SELF.fetch(`https://gaston.test/api/insights?u=2&t=${token}&month=2026-10`);
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /api/insights with a bad token is forbidden", async () => {
+    const res = await SELF.fetch("https://gaston.test/api/insights?u=2&t=nope&week=2026-10-29");
+    expect(res.status).toBe(403);
+  });
+
   it("GET /api/report without a period is a bad request", async () => {
     const token = await signToken(2, SECRET, new Date());
     const res = await SELF.fetch(`https://gaston.test/api/report?u=2&t=${token}`);

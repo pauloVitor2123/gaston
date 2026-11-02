@@ -29,12 +29,16 @@ function buildProvider(primary: LLMClientConfig, fallback: LLMClientConfig): ILL
   );
 }
 
+export function buildLLMClient(env: LLMEnv): ILLMClient {
+  const llmConfigs = buildLLMConfigs(env);
+  return buildProvider(llmConfigs.primary, llmConfigs.fallback);
+}
+
 export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHandler {
   const db = drizzle(env.DB);
-  const llmConfigs = buildLLMConfigs(env);
   const clock = new SystemClock();
 
-  const llm = buildProvider(llmConfigs.primary, llmConfigs.fallback);
+  const llm = buildLLMClient(env);
 
   const userRepo = new UserRepository(db);
   const categoryRepo = new CategoryRepository(db);
