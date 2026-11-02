@@ -26,6 +26,14 @@ export interface WeekInputs {
   workLogs: WorkLogEntry[];
 }
 
+export interface PeriodInputs {
+  start: Date;
+  dayCount: number;
+  days: DayMoney[];
+  incomeByPlatform: PlatformIncome[];
+  workLogs: WorkLogEntry[];
+}
+
 export interface DaySummary {
   date: Date;
   incomeCents: number;
@@ -36,14 +44,14 @@ export interface DaySummary {
   grossPerHourCents: number | null;
 }
 
-export interface WeekSummary {
-  weekStart: Date;
-  weekEnd: Date;
+export interface PeriodSummary {
+  start: Date;
+  end: Date;
   incomeCents: number;
   expenseCents: number;
   profitCents: number;
   incomeByPlatform: PlatformIncome[];
-  effortSource: "week" | "days" | "none";
+  effortSource: "week" | "days" | "mixed" | "none";
   km: number | null;
   onlineMinutes: number | null;
   rides: number | null;
@@ -66,6 +74,11 @@ interface Effort {
   rides: number | null;
 }
 
+interface EffortUnit extends Effort {
+  incomeCents: number;
+  expenseCents: number;
+}
+
 interface PairedTotals {
   incomeCents: number;
   expenseCents: number;
@@ -76,33 +89,36 @@ interface PairedTotals {
 
 const DAYS_IN_WEEK = 7;
 
-export function summarizeWeek(inputs: WeekInputs): WeekSummary {
+export function summarizeWeek(inputs: WeekInputs): PeriodSummary {
+  const { weekStart, ...rest } = inputs;
+  return summarizePeriod({ start: weekStart, dayCount: DAYS_IN_WEEK, ...rest });
+}
+
+export function summarizePeriod(inputs: PeriodInputs): PeriodSummary {
   const days = buildDays(inputs);
   const incomeCents = sum(days.map((d) => d.incomeCents));
   const expenseCents = sum(days.map((d) => d.expenseCents));
-  const weekLogs = inputs.workLogs.filter((log) => log.period === "week");
-  const weekEffort = weekLogs.length > 0 ? sumEffort(weekLogs) : null;
-  const dayEffort = sumEffort(days);
-  const effort = weekEffort ?? dayEffort;
-  const effortSource = weekEffort ? "week" : hasAny(dayEffort) ? "days" : "none";
+  const weeks = loggedWeeks(inputs, days);
+  const coveredDays = new Set(weeks.flatMap((w) => w.dayKeys));
+  const looseDays = days.filter((d) => !coveredDays.has(toIsoDate(d.date)));
+  const dayEffort = sumEffort(looseDays);
+  const units: EffortUnit[] = [...weeks.map((w) => w.unit), ...looseDays];
+  const effort = sumEffort(units);
 
-  const paired = (measures: Measure[]): PairedTotals =>
-    weekEffort ? weekPairing(weekEffort, incomeCents, expenseCents) : dayPairing(days, measures);
-
-  const perHour = paired(["onlineMinutes"]);
-  const perKm = paired(["km"]);
-  const perRide = paired(["rides"]);
-  const rideTime = paired(["rides", "onlineMinutes"]);
-  const rideKm = paired(["rides", "km"]);
+  const perHour = pair(units, ["onlineMinutes"]);
+  const perKm = pair(units, ["km"]);
+  const perRide = pair(units, ["rides"]);
+  const rideTime = pair(units, ["rides", "onlineMinutes"]);
+  const rideKm = pair(units, ["rides", "km"]);
 
   return {
-    weekStart: inputs.weekStart,
-    weekEnd: addDaysUtc(inputs.weekStart, DAYS_IN_WEEK - 1),
+    start: inputs.start,
+    end: addDaysUtc(inputs.start, inputs.dayCount - 1),
     incomeCents,
     expenseCents,
     profitCents: incomeCents - expenseCents,
     incomeByPlatform: [...inputs.incomeByPlatform].sort((a, b) => b.amountCents - a.amountCents),
-    effortSource,
+    effortSource: effortSourceOf(weeks.length > 0, hasAny(dayEffort)),
     km: effort.km,
     onlineMinutes: effort.onlineMinutes,
     rides: effort.rides,
@@ -118,9 +134,9 @@ export function summarizeWeek(inputs: WeekInputs): WeekSummary {
   };
 }
 
-function buildDays(inputs: WeekInputs): DaySummary[] {
-  return Array.from({ length: DAYS_IN_WEEK }, (_, offset) => {
-    const date = addDaysUtc(inputs.weekStart, offset);
+function buildDays(inputs: PeriodInputs): DaySummary[] {
+  return Array.from({ length: inputs.dayCount }, (_, offset) => {
+    const date = addDaysUtc(inputs.start, offset);
     const key = toIsoDate(date);
     const money = inputs.days.filter((d) => toIsoDate(d.date) === key);
     const logs = inputs.workLogs.filter((log) => log.period === "day" && toIsoDate(log.periodStart) === key);
@@ -136,6 +152,34 @@ function buildDays(inputs: WeekInputs): DaySummary[] {
   });
 }
 
+function loggedWeeks(inputs: PeriodInputs, days: DaySummary[]): { dayKeys: string[]; unit: EffortUnit }[] {
+  const dayKeys = days.map((d) => toIsoDate(d.date));
+  const weekStarts = [
+    ...new Set(inputs.workLogs.filter((log) => log.period === "week").map((log) => toIsoDate(log.periodStart))),
+  ];
+  return weekStarts.flatMap((weekKey) => {
+    const firstIndex = dayKeys.indexOf(weekKey);
+    if (firstIndex < 0 || firstIndex + DAYS_IN_WEEK > days.length) return [];
+    const weekDays = days.slice(firstIndex, firstIndex + DAYS_IN_WEEK);
+    const logs = inputs.workLogs.filter((log) => log.period === "week" && toIsoDate(log.periodStart) === weekKey);
+    return [
+      {
+        dayKeys: dayKeys.slice(firstIndex, firstIndex + DAYS_IN_WEEK),
+        unit: {
+          incomeCents: sum(weekDays.map((d) => d.incomeCents)),
+          expenseCents: sum(weekDays.map((d) => d.expenseCents)),
+          ...sumEffort(logs),
+        },
+      },
+    ];
+  });
+}
+
+function effortSourceOf(hasWeeks: boolean, hasDays: boolean): PeriodSummary["effortSource"] {
+  if (hasWeeks) return hasDays ? "mixed" : "week";
+  return hasDays ? "days" : "none";
+}
+
 function sumEffort(entries: Effort[]): Effort {
   return {
     km: sumNullable(entries.map((e) => e.km)),
@@ -144,28 +188,18 @@ function sumEffort(entries: Effort[]): Effort {
   };
 }
 
-function weekPairing(effort: Effort, incomeCents: number, expenseCents: number): PairedTotals {
+function pair(units: EffortUnit[], measures: Measure[]): PairedTotals {
+  const paired = units.filter((u) => measures.every((m) => (u[m] ?? 0) > 0));
   return {
-    incomeCents,
-    expenseCents,
-    km: effort.km ?? 0,
-    onlineMinutes: effort.onlineMinutes ?? 0,
-    rides: effort.rides ?? 0,
+    incomeCents: sum(paired.map((u) => u.incomeCents)),
+    expenseCents: sum(paired.map((u) => u.expenseCents)),
+    km: sum(paired.map((u) => u.km ?? 0)),
+    onlineMinutes: sum(paired.map((u) => u.onlineMinutes ?? 0)),
+    rides: sum(paired.map((u) => u.rides ?? 0)),
   };
 }
 
-function dayPairing(days: DaySummary[], measures: Measure[]): PairedTotals {
-  const paired = days.filter((d) => measures.every((m) => (d[m] ?? 0) > 0));
-  return {
-    incomeCents: sum(paired.map((d) => d.incomeCents)),
-    expenseCents: sum(paired.map((d) => d.expenseCents)),
-    km: sum(paired.map((d) => d.km ?? 0)),
-    onlineMinutes: sum(paired.map((d) => d.onlineMinutes ?? 0)),
-    rides: sum(paired.map((d) => d.rides ?? 0)),
-  };
-}
-
-function bestDayOf(days: DaySummary[]): WeekSummary["bestDay"] {
+function bestDayOf(days: DaySummary[]): PeriodSummary["bestDay"] {
   const best = days.reduce<DaySummary | null>(
     (top, d) => (d.incomeCents > (top?.incomeCents ?? 0) ? d : top),
     null,

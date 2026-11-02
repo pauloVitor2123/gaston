@@ -64,6 +64,13 @@
       "when": 1793616719494,
       "tag": "0008_work_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793625826964,
+      "tag": "0009_weekly_insights",
+      "breakpoints": true
     }
   ]
 }

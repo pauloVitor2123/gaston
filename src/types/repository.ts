@@ -5,8 +5,10 @@ import type {
   NewMantra,
   NewPendingConversation,
   NewPlatform,
+  NewWeeklyInsight,
   NewWorkLog,
   Platform,
+  WeeklyInsight,
   WorkLog,
   NewTransaction,
   NewUser,
@@ -43,6 +45,12 @@ export interface LabeledAmountRow {
   amountCents: number;
 }
 
+export interface DailyPlatformIncomeRow {
+  date: Date;
+  label: string | null;
+  amountCents: number;
+}
+
 export interface DailyMoneyRow {
   date: Date;
   incomeCents: number;
@@ -65,6 +73,11 @@ export interface ITransactionRepository {
   cancelBatch(userId: number, batchId: string): Promise<BatchCancellation>;
 }
 
+export interface IWeeklyInsightRepository {
+  findByWeek(userId: number, weekStart: Date): Promise<WeeklyInsight | null>;
+  save(data: NewWeeklyInsight): Promise<void>;
+}
+
 export interface IWorkLogRepository {
   create(data: NewWorkLog): Promise<WorkLog>;
   listActive(userId: number, from: Date, to: Date): Promise<WorkLog[]>;
@@ -82,6 +95,7 @@ export interface ISpendingRepository {
   sumIncomeTotal(filter: SpendingFilter): Promise<number>;
   sumIncomeByPlatform(filter: SpendingFilter): Promise<LabeledAmountRow[]>;
   sumByDay(filter: SpendingFilter): Promise<DailyMoneyRow[]>;
+  sumIncomeByDayAndPlatform(filter: SpendingFilter): Promise<DailyPlatformIncomeRow[]>;
 }
 
 export interface IPendingConversationRepository {

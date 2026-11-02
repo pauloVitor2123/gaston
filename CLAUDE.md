@@ -50,6 +50,7 @@ All tables are multi-tenant by `user_id` (design for 100+ users from day 1).
 | `card_invoices` | **Derived entity** (never hand-entered): calculated monthly statement from all card transactions |
 | `transactions` | Central: entries/exits with separate competence (`accrual_date`) and cash (`due_date`) |
 | `payment_events` | Ledger of payments (soft-void) against a transaction or invoice; source of truth for undo + partial invoice payment |
+| `weekly_insights` | Cached AI insights per user+week (`fingerprint` of the aggregates, `content` = 3 `{hypothesis, suggestion}`) |
 | `pending_conversations` | State for multi-turn clarification (TTL via Cron or `expires_at` check); discriminated `kind`: `draft` \| `payment_confirm` \| `undo_confirm` |
 
 **Cash flow rules** (prevent double-counting)
@@ -93,12 +94,12 @@ Persist a settled expense + 1-line confirmation
 ```
 <free text>            → record an expense, or ask a spending question
 /status                → current week (Mon–Sun): income by platform, expenses, profit, R$/h, R$/km, per-ride metrics, best day
-/dashboard             → personal signed HTML URL: chart by category (drill-down to subcategory), filter by month/day/range
+/dashboard             → personal signed HTML URL: weekly panel (‹ › navigation) + Mês tab — profit/income/expenses, earnings per day stacked by platform, productivity, category chart with drill-down
 /cancelar              → abandon an in-progress draft
 /help                  → help
 ```
 
-**`/dashboard`** is served by the Worker itself: `GET /dashboard?u=&t=` returns a self-contained HTML page (Chart.js via CDN) that fetches `GET /api/report?u=&t=&from=&to=&group_by=`. The token is an HMAC-SHA256 of the user id signed with the `DASHBOARD_SECRET` secret; the origin is derived from the incoming webhook request. Code in `src/services/dashboard/` (`token.ts`, `page.ts`, `handler.ts`).
+**`/dashboard`** is served by the Worker itself: `GET /dashboard?u=&t=` returns a self-contained HTML page (Chart.js via CDN, Inter via Google Fonts, design tokens as CSS variables, dark theme by default) that fetches `GET /api/report?u=&t=&week=YYYY-MM-DD` or `&month=YYYY-MM` — the period package built by `DashboardReportService` (`report.service.ts`). The week view also fetches `GET /api/insights?u=&t=&week=` → `InsightService` (`src/services/insights/`): 3 AI insights from the week's aggregates + the 4 previous weeks (no raw messages), cached in `weekly_insights` by a SHA-256 fingerprint of that input, so the LLM runs only when the numbers change; needs income **and** a work log, and an LLM failure answers `unavailable` without breaking the panel. The token is an HMAC-SHA256 of the user id signed with the `DASHBOARD_SECRET` secret; the origin is derived from the incoming webhook request. Code in `src/services/dashboard/` (`token.ts`, `page.ts`, `handler.ts`).
 
 ## Roadmap (4-week MVP)
 

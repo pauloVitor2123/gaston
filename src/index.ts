@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, webhookCallback } from "grammy";
 import type { BotReply } from "@/handlers/reply";
-import { buildMessageHandler } from "@/composition-root";
+import { buildLLMClient, buildMessageHandler } from "@/composition-root";
 import type { LLMEnv } from "@/config";
 import { handleDashboardRoutes } from "@/services/dashboard/handler";
 import { SystemClock } from "@/services/clock";
@@ -19,6 +19,7 @@ export default {
       db: env.DB,
       secret: env.DASHBOARD_SECRET,
       now: new SystemClock().now(),
+      llm: () => buildLLMClient(env),
     });
     if (dashboardResponse) return dashboardResponse;
 

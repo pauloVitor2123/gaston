@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseUtcDate } from "@/services/dates";
-import { summarizeWeek, type WeekInputs, type WorkLogEntry } from "@/services/metrics/weekly-summary";
+import {
+  summarizePeriod,
+  summarizeWeek,
+  type WeekInputs,
+  type WorkLogEntry,
+} from "@/services/metrics/weekly-summary";
 
 const MONDAY = parseUtcDate("2026-10-26");
 
@@ -12,8 +17,8 @@ function dayLog(iso: string, fields: Partial<Omit<WorkLogEntry, "period" | "peri
   return { period: "day", periodStart: parseUtcDate(iso), km: null, onlineMinutes: null, rides: null, ...fields };
 }
 
-function weekLog(fields: Partial<Omit<WorkLogEntry, "period" | "periodStart">>): WorkLogEntry {
-  return { period: "week", periodStart: MONDAY, km: null, onlineMinutes: null, rides: null, ...fields };
+function weekLog(fields: Partial<Omit<WorkLogEntry, "period" | "periodStart">>, monday = MONDAY): WorkLogEntry {
+  return { period: "week", periodStart: monday, km: null, onlineMinutes: null, rides: null, ...fields };
 }
 
 function inputs(overrides: Partial<WeekInputs> = {}): WeekInputs {
@@ -24,7 +29,7 @@ describe("summarizeWeek", () => {
   it("returns an empty week with seven days and no metrics", () => {
     const summary = summarizeWeek(inputs());
 
-    expect(summary.weekEnd).toEqual(parseUtcDate("2026-11-01"));
+    expect(summary.end).toEqual(parseUtcDate("2026-11-01"));
     expect(summary.days).toHaveLength(7);
     expect(summary.incomeCents).toBe(0);
     expect(summary.effortSource).toBe("none");
@@ -129,5 +134,39 @@ describe("summarizeWeek", () => {
     );
 
     expect(summary.incomeByPlatform.map((p) => p.label)).toEqual(["Uber", "99"]);
+  });
+});
+
+describe("summarizePeriod", () => {
+  const OCTOBER = { start: parseUtcDate("2026-10-01"), dayCount: 31, incomeByPlatform: [] };
+
+  it("combines whole weeks with a weekly log and loose days with daily logs", () => {
+    const summary = summarizePeriod({
+      ...OCTOBER,
+      days: [day("2026-10-06", 30000), day("2026-10-14", 20000)],
+      workLogs: [
+        weekLog({ onlineMinutes: 600 }, parseUtcDate("2026-10-05")),
+        dayLog("2026-10-07", { onlineMinutes: 999 }),
+        dayLog("2026-10-14", { onlineMinutes: 300 }),
+      ],
+    });
+
+    expect(summary.days).toHaveLength(31);
+    expect(summary.end).toEqual(parseUtcDate("2026-10-31"));
+    expect(summary.effortSource).toBe("mixed");
+    expect(summary.onlineMinutes).toBe(900);
+    expect(summary.grossPerHourCents).toBe(3333);
+  });
+
+  it("ignores a weekly log whose week crosses the period edge", () => {
+    const summary = summarizePeriod({
+      ...OCTOBER,
+      days: [day("2026-10-27", 10000)],
+      workLogs: [weekLog({ onlineMinutes: 600 }, parseUtcDate("2026-10-26"))],
+    });
+
+    expect(summary.effortSource).toBe("none");
+    expect(summary.onlineMinutes).toBeNull();
+    expect(summary.grossPerHourCents).toBeNull();
   });
 });
