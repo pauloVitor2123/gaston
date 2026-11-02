@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { describe, expect, it } from "vitest";
 import type { NewTransaction } from "@/db/schema";
 import { CategoryRepository } from "./category.repository";
+import { PlatformRepository } from "./platform.repository";
 import { SpendingRepository } from "./spending.repository";
 import { TransactionRepository } from "./transaction.repository";
 import { UserRepository } from "./user.repository";
@@ -92,6 +93,57 @@ describe("SpendingRepository", () => {
     await txRepo.create({ ...base, description: "b", expectedAmountCents: 2500, accrualDate: d, dueDate: d });
 
     expect(await repo.sumTotal({ userId, ...AUG })).toBe(3500);
+  });
+
+  it("sums income by platform and in total, ignoring expenses and undone income", async () => {
+    const { txRepo, repo, userId, base } = await setup(5004);
+    const db = drizzle(env.DB);
+    const uber = await new PlatformRepository(db).create({ userId, name: "Uber", synonyms: [] });
+    const d = new Date("2026-08-05");
+    const income = { ...base, direction: "in" as const, categoryId: null, accrualDate: d, dueDate: d };
+    await txRepo.create({ ...income, description: "Uber", platformId: uber.id, expectedAmountCents: 28000 });
+    await txRepo.create({ ...income, description: "Uber", platformId: uber.id, expectedAmountCents: 12000 });
+    await txRepo.create({ ...income, description: "receita", expectedAmountCents: 30000 });
+    await txRepo.create({ ...income, description: "Uber", platformId: uber.id, status: "cancelled", expectedAmountCents: 99900 });
+    await txRepo.create({ ...base, description: "gnv", expectedAmountCents: 9000, accrualDate: d, dueDate: d });
+
+    const rows = await repo.sumIncomeByPlatform({ userId, ...AUG });
+    const byLabel = Object.fromEntries(rows.map((r) => [String(r.label), r.amountCents]));
+    expect(byLabel).toEqual({ Uber: 40000, null: 30000 });
+    expect(await repo.sumIncomeTotal({ userId, ...AUG })).toBe(70000);
+    expect(await repo.sumTotal({ userId, ...AUG })).toBe(9000);
+  });
+
+  it("sumByDay splits income and expenses per day, ignoring undone records", async () => {
+    const { txRepo, repo, userId, base } = await setup(5006);
+    const d1 = new Date("2026-08-05");
+    const d2 = new Date("2026-08-06");
+    await txRepo.create({ ...base, description: "gnv", expectedAmountCents: 9000, accrualDate: d1, dueDate: d1 });
+    await txRepo.create({ ...base, description: "Uber", direction: "in", expectedAmountCents: 28000, accrualDate: d1, dueDate: d1 });
+    await txRepo.create({ ...base, description: "99", direction: "in", expectedAmountCents: 30000, accrualDate: d2, dueDate: d2 });
+    await txRepo.create({ ...base, description: "x", status: "cancelled", expectedAmountCents: 77700, accrualDate: d2, dueDate: d2 });
+
+    const rows = await repo.sumByDay({ userId, ...AUG });
+    const byDay = Object.fromEntries(rows.map((r) => [r.date.toISOString().slice(0, 10), [r.incomeCents, r.expenseCents]]));
+
+    expect(byDay).toEqual({ "2026-08-05": [28000, 9000], "2026-08-06": [30000, 0] });
+  });
+
+  it("sumIncomeByDayAndPlatform splits each day's income by platform", async () => {
+    const { txRepo, repo, userId, base } = await setup(5007);
+    const uber = await new PlatformRepository(drizzle(env.DB)).create({ userId, name: "Uber", synonyms: [] });
+    const d1 = new Date("2026-08-05");
+    const d2 = new Date("2026-08-06");
+    const income = { ...base, direction: "in" as const, categoryId: null };
+    await txRepo.create({ ...income, description: "Uber", platformId: uber.id, expectedAmountCents: 20000, accrualDate: d1, dueDate: d1 });
+    await txRepo.create({ ...income, description: "Uber", platformId: uber.id, expectedAmountCents: 8000, accrualDate: d1, dueDate: d1 });
+    await txRepo.create({ ...income, description: "receita", expectedAmountCents: 30000, accrualDate: d2, dueDate: d2 });
+    await txRepo.create({ ...base, description: "gnv", expectedAmountCents: 9000, accrualDate: d1, dueDate: d1 });
+
+    const rows = await repo.sumIncomeByDayAndPlatform({ userId, ...AUG });
+    const byKey = Object.fromEntries(rows.map((r) => [`${r.date.toISOString().slice(0, 10)}/${r.label}`, r.amountCents]));
+
+    expect(byKey).toEqual({ "2026-08-05/Uber": 28000, "2026-08-06/null": 30000 });
   });
 
   it("sumTotal returns 0 when nothing matches the range", async () => {

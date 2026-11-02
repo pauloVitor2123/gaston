@@ -1,5 +1,6 @@
-import { Bot, webhookCallback } from "grammy";
-import { buildMessageHandler } from "@/composition-root";
+import { Bot, InlineKeyboard, webhookCallback } from "grammy";
+import type { BotReply } from "@/handlers/reply";
+import { buildLLMClient, buildMessageHandler } from "@/composition-root";
 import type { LLMEnv } from "@/config";
 import { handleDashboardRoutes } from "@/services/dashboard/handler";
 import { SystemClock } from "@/services/clock";
@@ -18,6 +19,7 @@ export default {
       db: env.DB,
       secret: env.DASHBOARD_SECRET,
       now: new SystemClock().now(),
+      llm: () => buildLLMClient(env),
     });
     if (dashboardResponse) return dashboardResponse;
 
@@ -31,7 +33,18 @@ export default {
         ctx.from?.first_name ?? "Usuário",
         url.origin,
       );
-      await ctx.reply(reply.text);
+      await ctx.reply(reply.text, { reply_markup: keyboardFor(reply) });
+    });
+
+    bot.on("callback_query:data", async (ctx) => {
+      const chatId = ctx.chat?.id;
+      const reply = chatId ? await messageHandler.handleCallback(chatId, ctx.callbackQuery.data) : null;
+      await ctx.answerCallbackQuery();
+      if (!reply) return;
+      const original = ctx.callbackQuery.message?.text;
+      await ctx.editMessageText(original ? `${original}\n\n${reply.text}` : reply.text, {
+        reply_markup: keyboardFor(reply),
+      });
     });
 
     bot.on("message", async (ctx) => {
@@ -47,3 +60,10 @@ export default {
     return webhookCallback(bot, "cloudflare-mod")(request);
   },
 } satisfies ExportedHandler<AppEnv>;
+
+function keyboardFor(reply: BotReply): InlineKeyboard | undefined {
+  if (!reply.actions?.length) return undefined;
+  const keyboard = new InlineKeyboard();
+  for (const action of reply.actions) keyboard.text(action.label, action.id);
+  return keyboard;
+}

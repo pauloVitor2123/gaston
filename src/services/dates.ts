@@ -50,3 +50,8 @@ export function formatDayMonth(date: Date): string {
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   return `${day}/${month}`;
 }
+
+export function startOfWeek(date: Date): Date {
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  return addDaysUtc(startOfUtcDay(date), -daysSinceMonday);
+}

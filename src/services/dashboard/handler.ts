@@ -1,7 +1,12 @@
-import { drizzle } from "drizzle-orm/d1";
+import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
+import type { ILLMClient } from "@/types/llm";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
-import { querySpendingArgsSchema } from "@/services/analytics/query";
+import { WeeklyReportService } from "@/services/metrics/weekly-report.service";
 import { SpendingRepository } from "@/repositories/spending.repository";
+import { WorkLogRepository } from "@/repositories/work-log.repository";
+import { WeeklyInsightRepository } from "@/repositories/weekly-insight.repository";
+import { InsightService } from "@/services/insights/insight.service";
+import { DashboardReportService, parseDashboardQuery } from "@/services/dashboard/report.service";
 import { renderDashboardHtml } from "@/services/dashboard/page";
 import { verifyToken } from "@/services/dashboard/token";
 
@@ -9,6 +14,7 @@ interface DashboardDeps {
   db: D1Database;
   secret: string;
   now: Date;
+  llm: () => ILLMClient;
 }
 
 export async function handleDashboardRoutes(
@@ -28,19 +34,34 @@ export async function handleDashboardRoutes(
     const userId = await authorize(url, deps.secret, deps.now);
     if (!userId) return forbidden();
 
-    const parsed = querySpendingArgsSchema.safeParse({
-      group_by: url.searchParams.get("group_by"),
-      from: url.searchParams.get("from"),
-      to: url.searchParams.get("to"),
-    });
-    if (!parsed.success) return Response.json({ error: "invalid_params" }, { status: 400 });
+    const query = parseDashboardQuery(url.searchParams);
+    if (!query) return Response.json({ error: "invalid_params" }, { status: 400 });
 
-    const analytics = new AnalyticsService(new SpendingRepository(drizzle(deps.db)));
-    const report = await analytics.aggregate(userId, parsed.data);
-    return Response.json(report);
+    return Response.json(await buildReportService(drizzle(deps.db)).build(userId, query));
+  }
+
+  if (url.pathname === "/api/insights") {
+    const userId = await authorize(url, deps.secret, deps.now);
+    if (!userId) return forbidden();
+
+    const query = parseDashboardQuery(url.searchParams);
+    if (query?.view !== "week") return Response.json({ error: "invalid_params" }, { status: 400 });
+
+    const db = drizzle(deps.db);
+    const insights = new InsightService(buildPeriodReport(db), new WeeklyInsightRepository(db), deps.llm());
+    return Response.json(await insights.forWeek(userId, query.anyDay));
   }
 
   return null;
+}
+
+function buildPeriodReport(db: DrizzleD1Database): WeeklyReportService {
+  return new WeeklyReportService(new SpendingRepository(db), new WorkLogRepository(db));
+}
+
+function buildReportService(db: DrizzleD1Database): DashboardReportService {
+  const spendingRepo = new SpendingRepository(db);
+  return new DashboardReportService(spendingRepo, buildPeriodReport(db), new AnalyticsService(spendingRepo));
 }
 
 async function authorize(url: URL, secret: string, now: Date): Promise<number | null> {

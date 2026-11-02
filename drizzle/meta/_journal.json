@@ -50,6 +50,27 @@
       "when": 1788042105562,
       "tag": "0006_transaction_subcategory_id",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793616062348,
+      "tag": "0007_platforms_and_batch",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793616719494,
+      "tag": "0008_work_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793625826964,
+      "tag": "0009_weekly_insights",
+      "breakpoints": true
     }
   ]
 }

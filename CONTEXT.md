@@ -32,14 +32,13 @@ continua em `docs/` (`invoice-late-charge.md`, `mark-as-paid.md`, [[ADR-002]]).
   invalida todos os links de uma vez. Código em `src/services/dashboard/token.ts`.
 
 - **"Hoje" do painel é browser-local (fronteira deliberada)** — ao contrário do `/status`, que
-  ancora "hoje"/"este mês" no fuso do usuário via `clock.today(user.timezone)`, o painel calcula
-  os defaults de período no **cliente** (`new Date()` do browser). Escolha consciente: os
-  `<input type=date|month>` já são browser-locais, então misturar um "hoje" server-tz com pickers
-  locais confundiria mais. Consequência aceita: se o painel for aberto de um device em outro fuso,
-  o default "este mês"/"hoje" pode divergir do `/status` por até um dia. Para o único usuário
-  (quase sempre no fuso de casa) os dois batem. As datas escolhidas viajam como `YYYY-MM-DD` e o
-  servidor as compara contra `dueDate` (meia-noite UTC), inclusivas nas duas pontas (o
-  `AnalyticsService` soma +1 dia ao `to`).
+  ancora a semana no fuso do usuário via `clock.today(user.timezone)`, o painel decide qual
+  semana/mês abrir no **cliente** (`new Date()` do browser). Consequência aceita: aberto de um
+  device em outro fuso, a semana inicial pode divergir do `/status` por até um dia. Para o único
+  usuário (quase sempre no fuso de casa) os dois batem.
+- **Jornada semanal no mês** — a aba **Mês** usa uma jornada semanal só se a semana dela cabe
+  **inteira** no mês; uma semana que atravessa a virada do mês não entra nos totais de esforço do
+  mês (jornada semanal não é rateada). Ela continua valendo na própria semana.
 
 ## Motorista de aplicativo
 
@@ -180,6 +179,11 @@ continua em `docs/` (`invoice-late-charge.md`, `mark-as-paid.md`, [[ADR-002]]).
   responde "botão expirou" **sem agir**. Confirmações em voo continuam ancoradas em
   `pending_conversations` (o botão só referencia; ver [[ADR-001]]). Digitar "sim/não"
   (`affirmationOf`) permanece como fallback e converge no mesmo ponto de resolução.
+  _(Fluxo das confirmações estacionadas; hoje o único botão vivo é o [Desfazer].)_
+- **Lote da mensagem (batch)** — o identificador que amarra **todos** os registros gravados por
+  uma mesma mensagem; é a unidade do [Desfazer]. O toque chega como `data = "undo:<batch>"`,
+  não depende de `pending_conversations` e nunca expira. O adapter acrescenta o resultado ao
+  texto original da confirmação e remove o botão.
 
 ## Tempo
 

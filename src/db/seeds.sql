@@ -52,6 +52,11 @@ SET synonyms = '["gasolina","etanol","álcool","gnv","gás","diesel","eletricida
 WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Combustível'
   AND parent_id = (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL);
 
+INSERT OR IGNORE INTO platforms (user_id, name, synonyms) VALUES
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Uber',    '["uber","uber x","uberx"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), '99',      '["99","99pop","99 pop","noventa e nove"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'InDrive', '["indrive","in drive","indriver"]');
+
 INSERT OR IGNORE INTO mantras (user_id, name, target_percent) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pagas as Contas', 0.45),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Se Pagar',        0.30),
