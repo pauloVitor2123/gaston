@@ -3,6 +3,7 @@ export * from "./cards";
 export * from "./categories";
 export * from "./mantras";
 export * from "./platforms";
+export * from "./work-logs";
 export * from "./finance";
 export * from "./payments";
 export * from "./conversations";

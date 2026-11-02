@@ -188,32 +188,3 @@ describe("TransactionService.persistIncome", () => {
     expect(row.accrualDate).toEqual(new Date(Date.UTC(2025, 0, 18)));
   });
 });
-
-describe("TransactionService.undoBatch", () => {
-  it("reports undone when it cancelled something", async () => {
-    const { service, repos } = makeService();
-    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
-      .fn()
-      .mockResolvedValue({ total: 2, cancelled: 2 });
-
-    expect(await service.undoBatch(userId, "b1")).toBe("undone");
-  });
-
-  it("reports already_undone when the batch exists but nothing was left to cancel", async () => {
-    const { service, repos } = makeService();
-    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
-      .fn()
-      .mockResolvedValue({ total: 2, cancelled: 0 });
-
-    expect(await service.undoBatch(userId, "b1")).toBe("already_undone");
-  });
-
-  it("reports not_found for an unknown batch", async () => {
-    const { service, repos } = makeService();
-    (repos.transactionRepo as unknown as { cancelBatch: ReturnType<typeof vi.fn> }).cancelBatch = vi
-      .fn()
-      .mockResolvedValue({ total: 0, cancelled: 0 });
-
-    expect(await service.undoBatch(userId, "nope")).toBe("not_found");
-  });
-});

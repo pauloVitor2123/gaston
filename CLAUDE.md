@@ -92,7 +92,7 @@ Persist a settled expense + 1-line confirmation
 
 ```
 <free text>            → record an expense, or ask a spending question
-/status                → current civil-month spending total + breakdown by category
+/status                → current week (Mon–Sun): income by platform, expenses, profit, R$/h, R$/km, per-ride metrics, best day
 /dashboard             → personal signed HTML URL: chart by category (drill-down to subcategory), filter by month/day/range
 /cancelar              → abandon an in-progress draft
 /help                  → help

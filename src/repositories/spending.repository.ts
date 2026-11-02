@@ -4,6 +4,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import { categories, platforms, transactions } from "@/db/schema";
 import type {
   CategorySubSpendingRow,
+  DailyMoneyRow,
   ISpendingRepository,
   LabeledAmountRow,
   SpendingFilter,
@@ -53,6 +54,26 @@ export class SpendingRepository implements ISpendingRepository {
     return rows.map((r) => ({ label: r.label, amountCents: r.amountCents }));
   }
 
+  async sumByDay(filter: SpendingFilter): Promise<DailyMoneyRow[]> {
+    const rows = await this.db
+      .select({
+        date: transactions.dueDate,
+        incomeCents: sql<number>`sum(case when ${transactions.direction} = 'in' then ${effectiveAmount} else 0 end)`,
+        expenseCents: sql<number>`sum(case when ${transactions.direction} = 'out' then ${effectiveAmount} else 0 end)`,
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.userId, filter.userId),
+          ne(transactions.status, "cancelled"),
+          gte(transactions.dueDate, filter.from),
+          lt(transactions.dueDate, filter.to),
+        ),
+      )
+      .groupBy(transactions.dueDate);
+    return rows.map((r) => ({ date: r.date, incomeCents: r.incomeCents, expenseCents: r.expenseCents }));
+  }
+
   private async total(filter: SpendingFilter, direction: Direction): Promise<number> {
     const [row] = await this.db
       .select({ amountCents: amount() })
@@ -62,8 +83,10 @@ export class SpendingRepository implements ISpendingRepository {
   }
 }
 
+const effectiveAmount = sql`coalesce(${transactions.actualAmountCents}, ${transactions.expectedAmountCents})`;
+
 function amount(): SQL<number> {
-  return sql<number>`sum(coalesce(${transactions.actualAmountCents}, ${transactions.expectedAmountCents}))`;
+  return sql<number>`sum(${effectiveAmount})`;
 }
 
 function scope(filter: SpendingFilter, direction: Direction): SQL | undefined {

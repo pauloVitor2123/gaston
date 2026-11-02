@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addMonthsUtc, formatDayMonth, parseUtcDate, utcDayClamped } from "@/services/dates";
+import { addMonthsUtc, formatDayMonth, parseUtcDate, startOfWeek, utcDayClamped } from "@/services/dates";
 
 describe("parseUtcDate", () => {
   it("parses an ISO date to UTC midnight", () => {
@@ -34,5 +34,20 @@ describe("addMonthsUtc", () => {
 describe("formatDayMonth", () => {
   it("formats as zero-padded dd/mm from the UTC date", () => {
     expect(formatDayMonth(new Date(Date.UTC(2026, 2, 5)))).toBe("05/03");
+  });
+});
+
+describe("startOfWeek", () => {
+  it("returns the same day for a Monday", () => {
+    expect(startOfWeek(parseUtcDate("2026-10-26"))).toEqual(parseUtcDate("2026-10-26"));
+  });
+
+  it("returns the previous Monday for mid-week and Sunday", () => {
+    expect(startOfWeek(parseUtcDate("2026-10-29"))).toEqual(parseUtcDate("2026-10-26"));
+    expect(startOfWeek(parseUtcDate("2026-11-01"))).toEqual(parseUtcDate("2026-10-26"));
+  });
+
+  it("crosses month and year boundaries", () => {
+    expect(startOfWeek(parseUtcDate("2027-01-02"))).toEqual(parseUtcDate("2026-12-28"));
   });
 });

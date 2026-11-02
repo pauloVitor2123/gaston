@@ -30,7 +30,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "almoço", amount_cents: 3500 }],
-      incomes: [],
+      incomes: [], workLogs: [],
     });
   });
 
@@ -50,7 +50,7 @@ describe("CollectionAgent.run", () => {
         { description: "gasolina", amount_cents: 10000 },
         { description: "estacionamento", amount_cents: 5000 },
       ],
-      incomes: [],
+      incomes: [], workLogs: [],
     });
   });
 
@@ -67,7 +67,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "gasolina", amount_cents: 10000 }],
-      incomes: [],
+      incomes: [], workLogs: [],
     });
   });
 
@@ -84,7 +84,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "gasolina", amount_cents: 10000 }],
-      incomes: [],
+      incomes: [], workLogs: [],
     });
   });
 
@@ -101,7 +101,7 @@ describe("CollectionAgent.run", () => {
     expect(turn).toEqual({
       kind: "drafts",
       drafts: [{ description: "gnv", amount_cents: 9000 }],
-      incomes: [{ amount_cents: 28000, platform_name: "Uber" }],
+      incomes: [{ amount_cents: 28000, platform_name: "Uber" }], workLogs: [],
     });
   });
 
@@ -115,7 +115,25 @@ describe("CollectionAgent.run", () => {
 
     const turn = await agent.run([{ role: "user", content: "faturamento 300" }], context);
 
-    expect(turn).toEqual({ kind: "drafts", drafts: [], incomes: [{ amount_cents: 30000 }] });
+    expect(turn).toEqual({ kind: "drafts", drafts: [], incomes: [{ amount_cents: 30000 }], workLogs: [] });
+  });
+
+  it("returns work logs and drops one with no measure", async () => {
+    const { agent } = agentReturning({
+      toolCalls: [
+        { name: "record_work_log", arguments: { km: 230, online_minutes: 600, rides: 22 } },
+        { name: "record_work_log", arguments: { period: "week" } },
+      ],
+    });
+
+    const turn = await agent.run([{ role: "user", content: "rodei 230km, 10h online, 22 corridas" }], context);
+
+    expect(turn).toEqual({
+      kind: "drafts",
+      drafts: [],
+      incomes: [],
+      workLogs: [{ km: 230, online_minutes: 600, rides: 22 }],
+    });
   });
 
   it("returns a question when the model responds with text", async () => {
@@ -164,6 +182,7 @@ describe("CollectionAgent.run", () => {
     expect(tools.map((t: { name: string }) => t.name)).toEqual([
       "record_transaction",
       "record_income",
+      "record_work_log",
       "query_spending",
     ]);
     expect(system).toContain("Alimentação");

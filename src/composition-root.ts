@@ -7,6 +7,8 @@ import { CollectionAgent } from "@/services/collection/collection-agent";
 import { SystemClock } from "@/services/clock";
 import { TransactionService } from "@/services/transaction/transaction.service";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
+import { WeeklyReportService } from "@/services/metrics/weekly-report.service";
+import { UndoService } from "@/services/undo/undo.service";
 import { DashboardLink } from "@/services/dashboard/token";
 import { MessageHandler } from "@/handlers/message.handler";
 import { UserRepository } from "@/repositories/user.repository";
@@ -15,6 +17,7 @@ import { MantraRepository } from "@/repositories/mantra.repository";
 import { PlatformRepository } from "@/repositories/platform.repository";
 import { TransactionRepository } from "@/repositories/transaction.repository";
 import { SpendingRepository } from "@/repositories/spending.repository";
+import { WorkLogRepository } from "@/repositories/work-log.repository";
 import { PendingConversationRepository } from "@/repositories/pending-conversation.repository";
 
 const noopMetrics = { logAttempt: () => {} };
@@ -37,18 +40,22 @@ export function buildMessageHandler(env: LLMEnv & { DB: D1Database }): MessageHa
   const categoryRepo = new CategoryRepository(db);
   const mantraRepo = new MantraRepository(db);
   const transactionRepo = new TransactionRepository(db);
+  const spendingRepo = new SpendingRepository(db);
+  const workLogRepo = new WorkLogRepository(db);
 
   const agent = new CollectionAgent(llm);
   const transactionService = new TransactionService(categoryRepo, mantraRepo, transactionRepo, clock);
-  const analyticsService = new AnalyticsService(new SpendingRepository(db));
 
   return new MessageHandler(
     userRepo,
     categoryRepo,
     new PlatformRepository(db),
+    workLogRepo,
     agent,
     transactionService,
-    analyticsService,
+    new UndoService(transactionRepo, workLogRepo),
+    new AnalyticsService(spendingRepo),
+    new WeeklyReportService(spendingRepo, workLogRepo),
     new PendingConversationRepository(db),
     new DashboardLink(env.DASHBOARD_SECRET, clock),
     clock,
