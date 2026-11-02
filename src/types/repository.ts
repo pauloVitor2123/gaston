@@ -5,8 +5,10 @@ import type {
   NewMantra,
   NewPendingConversation,
   NewPlatform,
+  NewWeeklyInsight,
   NewWorkLog,
   Platform,
+  WeeklyInsight,
   WorkLog,
   NewTransaction,
   NewUser,
@@ -69,6 +71,11 @@ export interface BatchCancellation {
 export interface ITransactionRepository {
   create(data: NewTransaction): Promise<Transaction>;
   cancelBatch(userId: number, batchId: string): Promise<BatchCancellation>;
+}
+
+export interface IWeeklyInsightRepository {
+  findByWeek(userId: number, weekStart: Date): Promise<WeeklyInsight | null>;
+  save(data: NewWeeklyInsight): Promise<void>;
 }
 
 export interface IWorkLogRepository {

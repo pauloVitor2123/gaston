@@ -92,6 +92,13 @@ export function renderDashboardHtml(): string {
   tr.drill { cursor: pointer; }
   .chip-btn { border: 0; background: var(--bg); border-radius: 9px; padding: 4px 10px; font-size: 13px; font-weight: 500; }
 
+  .badge { font-size: 13px; font-weight: 500; color: var(--accent); }
+  .insight { padding: 12px 0; border-top: 1px solid var(--line); }
+  .insight:first-child { border-top: 0; padding-top: 0; }
+  .insight .h { font-weight: 500; margin: 0 0 4px; }
+  .insight .s { margin: 0; color: var(--text-muted); }
+  .insight .s::before { content: "→ "; color: var(--accent); }
+
   .empty { color: var(--text-muted); text-align: center; padding: 24px 0; font-size: 13px; }
   .hint { color: var(--text-muted); font-size: 13px; margin: 12px 0 0; }
   .error { color: var(--negative); text-align: center; padding: 32px 0; }
@@ -170,7 +177,11 @@ export function renderDashboardHtml(): string {
       <table id="table-category"></table>
     </section>
 
-    <section class="card" id="insights" hidden></section>
+    <section class="card" id="insights" hidden>
+      <h2>Insights da semana <span class="badge">IA</span></h2>
+      <div id="insights-body"></div>
+      <p class="hint">Sugestões geradas por IA a partir dos seus números. Não é orientação de especialista.</p>
+    </section>
   </main>
 
 <script>
@@ -179,7 +190,7 @@ export function renderDashboardHtml(): string {
   var u = params.get("u");
   var t = params.get("t");
   var WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
-  var state = { view: "week", anchor: startOfWeek(localToday()), report: null, drill: null };
+  var state = { view: "week", anchor: startOfWeek(localToday()), report: null, drill: null, requestId: 0 };
   var charts = {};
 
   function el(id) { return document.getElementById(id); }
@@ -407,6 +418,37 @@ export function renderDashboardHtml(): string {
     });
   }
 
+  var INSIGHT_MESSAGES = {
+    loading: "Gerando insights…",
+    insufficient_data: "Registre receita e jornada (km, horas online ou corridas) desta semana para receber insights.",
+    unavailable: "Os insights não estão disponíveis agora. Tente abrir o painel mais tarde."
+  };
+
+  function renderInsightMessage(key) {
+    el("insights-body").innerHTML = "<p class='empty'>" + INSIGHT_MESSAGES[key] + "</p>";
+  }
+
+  function loadInsights(requestId) {
+    var card = el("insights");
+    card.hidden = state.view !== "week";
+    if (card.hidden) return;
+    renderInsightMessage("loading");
+    var qs = "u=" + encodeURIComponent(u) + "&t=" + encodeURIComponent(t) + "&week=" + iso(state.anchor);
+    fetch("/api/insights?" + qs)
+      .then(function (r) {
+        if (!r.ok) throw new Error("http " + r.status);
+        return r.json();
+      })
+      .then(function (result) {
+        if (requestId !== state.requestId) return;
+        if (result.status !== "ready") { renderInsightMessage(result.status === "insufficient_data" ? "insufficient_data" : "unavailable"); return; }
+        el("insights-body").innerHTML = result.items.map(function (item) {
+          return "<div class='insight'><p class='h'>" + escapeHtml(item.hypothesis) + "</p><p class='s'>" + escapeHtml(item.suggestion) + "</p></div>";
+        }).join("");
+      })
+      .catch(function () { if (requestId === state.requestId) renderInsightMessage("unavailable"); });
+  }
+
   function render() {
     var r = state.report;
     if (!r) return;
@@ -426,8 +468,11 @@ export function renderDashboardHtml(): string {
   function load() {
     syncNav();
     state.drill = null;
+    var requestId = ++state.requestId;
+    loadInsights(requestId);
     fetchReport()
       .then(function (report) {
+        if (requestId !== state.requestId) return;
         state.report = report;
         el("error").hidden = true;
         el("content").hidden = false;
