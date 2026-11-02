@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildCollectionSystemPrompt } from "@/services/collection/prompts";
 import { PLACEHOLDER_DESCRIPTION } from "@/services/collection/draft";
 
-const context = { categories: ["Alimentação", "Outros"], today: "2026-08-19" };
+const context = {
+  categories: [
+    { name: "Alimentação", subcategories: [] },
+    { name: "Transporte", subcategories: ["App", "Combustível"] },
+    { name: "Outros", subcategories: [] },
+  ],
+  platforms: ["Uber", "99"],
+  today: "2026-08-19",
+};
 
 describe("buildCollectionSystemPrompt", () => {
   it("forbids asking for the date", () => {
@@ -24,5 +32,23 @@ describe("buildCollectionSystemPrompt", () => {
     const prompt = buildCollectionSystemPrompt(context);
     expect(prompt).toContain("Alimentação");
     expect(prompt).toContain("2026-08-19");
+  });
+
+  it("lists each category with its known subcategories", () => {
+    const prompt = buildCollectionSystemPrompt(context);
+    expect(prompt).toContain("Transporte: App, Combustível");
+  });
+
+  it("instructs recording income with record_income and lists known platforms", () => {
+    const prompt = buildCollectionSystemPrompt(context);
+    expect(prompt).toContain("record_income");
+    expect(prompt).toContain("Plataformas conhecidas: Uber, 99");
+    expect(prompt.toLowerCase()).toContain("nunca pergunte a plataforma");
+  });
+
+  it("instructs proposing and reusing a subcategory", () => {
+    const prompt = buildCollectionSystemPrompt(context).toLowerCase();
+    expect(prompt).toContain("subcategory_name");
+    expect(prompt).toContain("reuse");
   });
 });

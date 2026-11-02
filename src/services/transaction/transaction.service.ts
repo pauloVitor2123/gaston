@@ -13,8 +13,19 @@ export interface TransactionInput {
   amount_cents: number;
   date?: string;
   category_name?: string;
+  subcategory_id?: number;
+  subcategory_name?: string;
   mantra?: Mantra;
 }
+
+export interface IncomeInput {
+  amount_cents: number;
+  date?: string;
+  platform_id?: number;
+  platform_name?: string;
+}
+
+const PLATFORMLESS_INCOME_DESCRIPTION = "receita";
 
 export class TransactionService {
   constructor(
@@ -29,6 +40,7 @@ export class TransactionService {
     userId: number,
     rawMessage: string,
     today: Date,
+    batchId?: string,
   ): Promise<Transaction> {
     const accrualDate = input.date ? parseUtcDate(input.date) : today;
 
@@ -52,11 +64,39 @@ export class TransactionService {
       dueDate: accrualDate,
       paymentMethod: "cash",
       categoryId: category?.id,
+      subcategoryId: input.subcategory_id,
       mantraId: mantra?.id,
+      batchId,
       source: "user",
       rawMessage,
       status: "settled",
       settledAt: now,
+    });
+  }
+
+  async persistIncome(
+    input: IncomeInput,
+    userId: number,
+    rawMessage: string,
+    today: Date,
+    batchId: string,
+  ): Promise<Transaction> {
+    const accrualDate = input.date ? parseUtcDate(input.date) : today;
+    return this.transactionRepo.create({
+      userId,
+      direction: "in",
+      description: input.platform_name ?? PLATFORMLESS_INCOME_DESCRIPTION,
+      expectedAmountCents: input.amount_cents,
+      actualAmountCents: input.amount_cents,
+      accrualDate,
+      dueDate: accrualDate,
+      paymentMethod: "cash",
+      platformId: input.platform_id,
+      batchId,
+      source: "user",
+      rawMessage,
+      status: "settled",
+      settledAt: this.clock.now(),
     });
   }
 }

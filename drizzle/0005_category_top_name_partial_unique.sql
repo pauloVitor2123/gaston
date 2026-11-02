@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `categories_user_top_name_unique` ON `categories` (`user_id`,`name`) WHERE "categories"."parent_id" is null;

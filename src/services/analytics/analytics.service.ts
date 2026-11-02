@@ -1,10 +1,15 @@
-import type { ISpendingRepository, SpendingFilter, SpendingRow } from "@/types/repository";
+import type {
+  CategorySubSpendingRow,
+  ISpendingRepository,
+  SpendingFilter,
+} from "@/types/repository";
 import type { QuerySpendingArgs, SpendingGroupBy } from "@/services/analytics/query";
 import { addDaysUtc, parseUtcDate } from "@/services/dates";
 
 export interface SpendingBreakdownRow {
   label: string;
   amountCents: number;
+  subcategories?: SpendingBreakdownRow[];
 }
 
 export interface SpendingReport {
@@ -14,9 +19,11 @@ export interface SpendingReport {
 
 const UNLABELED: Record<SpendingGroupBy, string> = {
   category: "Sem categoria",
-  mantra: "Sem mantra",
+  platform: "Sem plataforma",
   none: "Total",
 };
+
+const NO_SUBCATEGORY_LABEL = "(sem subcategoria)";
 
 export class AnalyticsService {
   constructor(private readonly spendingRepo: ISpendingRepository) {}
@@ -28,24 +35,49 @@ export class AnalyticsService {
       to: addDaysUtc(parseUtcDate(params.to), 1),
     };
 
-    const rows = await this.rowsFor(params.group_by, filter);
-    const labeled = rows
-      .map((row) => ({ label: row.label ?? UNLABELED[params.group_by], amountCents: row.amountCents }))
-      .sort((a, b) => b.amountCents - a.amountCents);
-    const totalCents = labeled.reduce((sum, row) => sum + row.amountCents, 0);
-    return { rows: labeled, totalCents };
+    const rows =
+      params.subject === "income" ? await this.incomeRows(params.group_by, filter) : await this.expenseRows(params.group_by, filter);
+    const totalCents = rows.reduce((sum, row) => sum + row.amountCents, 0);
+    return { rows, totalCents };
   }
 
-  private async rowsFor(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingRow[]> {
-    switch (groupBy) {
-      case "none": {
-        const total = await this.spendingRepo.sumTotal(filter);
-        return total > 0 ? [{ label: null, amountCents: total }] : [];
+  private async expenseRows(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingBreakdownRow[]> {
+    if (groupBy === "none") return this.totalRow(await this.spendingRepo.sumTotal(filter));
+    return this.categoryTree(await this.spendingRepo.sumByCategoryTree(filter));
+  }
+
+  private async incomeRows(groupBy: SpendingGroupBy, filter: SpendingFilter): Promise<SpendingBreakdownRow[]> {
+    if (groupBy === "none") return this.totalRow(await this.spendingRepo.sumIncomeTotal(filter));
+    const rows = await this.spendingRepo.sumIncomeByPlatform(filter);
+    return rows
+      .map((row) => ({ label: row.label ?? UNLABELED.platform, amountCents: row.amountCents }))
+      .sort((a, b) => b.amountCents - a.amountCents);
+  }
+
+  private totalRow(totalCents: number): SpendingBreakdownRow[] {
+    return totalCents > 0 ? [{ label: UNLABELED.none, amountCents: totalCents }] : [];
+  }
+
+  private categoryTree(rows: CategorySubSpendingRow[]): SpendingBreakdownRow[] {
+    const byCategory = new Map<string, { amountCents: number; subs: SpendingBreakdownRow[] }>();
+    for (const row of rows) {
+      const label = row.categoryLabel ?? UNLABELED.category;
+      const entry = byCategory.get(label) ?? { amountCents: 0, subs: [] };
+      entry.amountCents += row.amountCents;
+      if (row.subcategoryLabel !== null) {
+        entry.subs.push({ label: row.subcategoryLabel, amountCents: row.amountCents });
+      } else if (rows.some((r) => (r.categoryLabel ?? UNLABELED.category) === label && r.subcategoryLabel !== null)) {
+        entry.subs.push({ label: NO_SUBCATEGORY_LABEL, amountCents: row.amountCents });
       }
-      case "category":
-        return this.spendingRepo.sumByCategory(filter);
-      case "mantra":
-        return this.spendingRepo.sumByMantra(filter);
+      byCategory.set(label, entry);
     }
+
+    return [...byCategory.entries()]
+      .map(([label, { amountCents, subs }]) =>
+        subs.length > 0
+          ? { label, amountCents, subcategories: subs.sort((a, b) => b.amountCents - a.amountCents) }
+          : { label, amountCents },
+      )
+      .sort((a, b) => b.amountCents - a.amountCents);
   }
 }

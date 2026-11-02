@@ -12,7 +12,7 @@ const userId = 1;
 const NOW = new Date("2025-01-20T12:00:00.000Z");
 const TODAY = new Date(Date.UTC(2025, 0, 20));
 
-const mockCategory = { id: 10, userId, name: "Alimentação", synonyms: [] } as Category;
+const mockCategory = { id: 10, userId, name: "Alimentação", synonyms: [], parentId: null } as Category;
 const mockMantra = { id: 30, userId, name: "Pagas as Contas", targetPercent: 0.45 } as Mantra;
 const mockTransaction = { id: 1, userId } as Transaction;
 
@@ -118,6 +118,20 @@ describe("TransactionService.persist", () => {
     expect(created(repos).categoryId).toBeUndefined();
   });
 
+  it("writes the resolved subcategoryId from the input", async () => {
+    const { service, repos } = makeService();
+    await service.persist({ ...baseInput, subcategory_id: 21 }, userId, "raw", TODAY);
+
+    expect(created(repos).subcategoryId).toBe(21);
+  });
+
+  it("leaves subcategoryId undefined when the input has none", async () => {
+    const { service, repos } = makeService();
+    await service.persist(baseInput, userId, "raw", TODAY);
+
+    expect(created(repos).subcategoryId).toBeUndefined();
+  });
+
   it("stores rawMessage and source=user", async () => {
     const { service, repos } = makeService();
     await service.persist(baseInput, userId, "almoço 35 padaria", TODAY);
@@ -125,5 +139,52 @@ describe("TransactionService.persist", () => {
     const row = created(repos);
     expect(row.rawMessage).toBe("almoço 35 padaria");
     expect(row.source).toBe("user");
+  });
+
+  it("tags the expense with the message batch id", async () => {
+    const { service, repos } = makeService();
+    await service.persist(baseInput, userId, "raw", TODAY, "batch-1");
+
+    expect(created(repos).batchId).toBe("batch-1");
+  });
+});
+
+describe("TransactionService.persistIncome", () => {
+  it("records a settled income with platform, batch and no category or mantra", async () => {
+    const { service, repos } = makeService();
+    await service.persistIncome(
+      { amount_cents: 28000, platform_id: 5, platform_name: "Uber" },
+      userId,
+      "recebi 280 da uber",
+      TODAY,
+      "batch-2",
+    );
+
+    const row = created(repos);
+    expect(row).toMatchObject({
+      direction: "in",
+      description: "Uber",
+      expectedAmountCents: 28000,
+      actualAmountCents: 28000,
+      status: "settled",
+      platformId: 5,
+      batchId: "batch-2",
+      rawMessage: "recebi 280 da uber",
+      accrualDate: TODAY,
+      dueDate: TODAY,
+    });
+    expect(row.categoryId).toBeUndefined();
+    expect(row.mantraId).toBeUndefined();
+    expect(repos.mantraRepo.findByName).not.toHaveBeenCalled();
+  });
+
+  it("describes a platform-less income as receita and honors the given date", async () => {
+    const { service, repos } = makeService();
+    await service.persistIncome({ amount_cents: 30000, date: "2025-01-18" }, userId, "raw", TODAY, "b");
+
+    const row = created(repos);
+    expect(row.description).toBe("receita");
+    expect(row.platformId).toBeUndefined();
+    expect(row.accrualDate).toEqual(new Date(Date.UTC(2025, 0, 18)));
   });
 });

@@ -29,6 +29,48 @@
       "when": 1785883112062,
       "tag": "0003_last_moira_mactaggert",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788039363064,
+      "tag": "0004_add_category_parent_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788042055049,
+      "tag": "0005_category_top_name_partial_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788042105562,
+      "tag": "0006_transaction_subcategory_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793616062348,
+      "tag": "0007_platforms_and_batch",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793616719494,
+      "tag": "0008_work_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793625826964,
+      "tag": "0009_weekly_insights",
+      "breakpoints": true
     }
   ]
 }

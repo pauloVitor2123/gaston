@@ -47,4 +47,37 @@ describe("TransactionRepository", () => {
     expect(tx.status).toBe("settled");
     expect(tx.direction).toBe("out");
   });
+
+  describe("cancelBatch", () => {
+    async function seedBatch(chatId: number) {
+      const ctx = await setup(chatId);
+      const now = new Date();
+      const row = { ...ctx.base, status: "settled" as const, accrualDate: now, dueDate: now };
+      await ctx.repo.create({ ...row, description: "gnv", batchId: "b1" });
+      await ctx.repo.create({ ...row, description: "uber", direction: "in", batchId: "b1" });
+      const other = await ctx.repo.create({ ...row, description: "almoço", batchId: "b2" });
+      return { ...ctx, other };
+    }
+
+    it("cancels every record of the batch and reports how many it touched", async () => {
+      const { repo, userId } = await seedBatch(4002);
+
+      expect(await repo.cancelBatch(userId, "b1")).toEqual({ total: 2, cancelled: 2 });
+    });
+
+    it("is idempotent: a second undo touches nothing but still finds the batch", async () => {
+      const { repo, userId } = await seedBatch(4003);
+      await repo.cancelBatch(userId, "b1");
+
+      expect(await repo.cancelBatch(userId, "b1")).toEqual({ total: 2, cancelled: 0 });
+    });
+
+    it("leaves other batches untouched and ignores other users' batches", async () => {
+      const { repo, userId } = await seedBatch(4004);
+
+      expect(await repo.cancelBatch(userId + 999, "b1")).toEqual({ total: 0, cancelled: 0 });
+      expect(await repo.cancelBatch(userId, "b2")).toEqual({ total: 1, cancelled: 1 });
+      expect(await repo.cancelBatch(userId, "b1")).toEqual({ total: 2, cancelled: 2 });
+    });
+  });
 });
