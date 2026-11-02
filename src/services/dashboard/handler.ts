@@ -1,7 +1,9 @@
 import { drizzle } from "drizzle-orm/d1";
 import { AnalyticsService } from "@/services/analytics/analytics.service";
-import { querySpendingArgsSchema } from "@/services/analytics/query";
+import { WeeklyReportService } from "@/services/metrics/weekly-report.service";
 import { SpendingRepository } from "@/repositories/spending.repository";
+import { WorkLogRepository } from "@/repositories/work-log.repository";
+import { DashboardReportService, parseDashboardQuery } from "@/services/dashboard/report.service";
 import { renderDashboardHtml } from "@/services/dashboard/page";
 import { verifyToken } from "@/services/dashboard/token";
 
@@ -28,19 +30,23 @@ export async function handleDashboardRoutes(
     const userId = await authorize(url, deps.secret, deps.now);
     if (!userId) return forbidden();
 
-    const parsed = querySpendingArgsSchema.safeParse({
-      group_by: url.searchParams.get("group_by"),
-      from: url.searchParams.get("from"),
-      to: url.searchParams.get("to"),
-    });
-    if (!parsed.success) return Response.json({ error: "invalid_params" }, { status: 400 });
+    const query = parseDashboardQuery(url.searchParams);
+    if (!query) return Response.json({ error: "invalid_params" }, { status: 400 });
 
-    const analytics = new AnalyticsService(new SpendingRepository(drizzle(deps.db)));
-    const report = await analytics.aggregate(userId, parsed.data);
-    return Response.json(report);
+    return Response.json(await buildReportService(deps.db).build(userId, query));
   }
 
   return null;
+}
+
+function buildReportService(d1: D1Database): DashboardReportService {
+  const db = drizzle(d1);
+  const spendingRepo = new SpendingRepository(db);
+  return new DashboardReportService(
+    spendingRepo,
+    new WeeklyReportService(spendingRepo, new WorkLogRepository(db)),
+    new AnalyticsService(spendingRepo),
+  );
 }
 
 async function authorize(url: URL, secret: string, now: Date): Promise<number | null> {

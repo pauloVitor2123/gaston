@@ -43,6 +43,12 @@ export interface LabeledAmountRow {
   amountCents: number;
 }
 
+export interface DailyPlatformIncomeRow {
+  date: Date;
+  label: string | null;
+  amountCents: number;
+}
+
 export interface DailyMoneyRow {
   date: Date;
   incomeCents: number;
@@ -82,6 +88,7 @@ export interface ISpendingRepository {
   sumIncomeTotal(filter: SpendingFilter): Promise<number>;
   sumIncomeByPlatform(filter: SpendingFilter): Promise<LabeledAmountRow[]>;
   sumByDay(filter: SpendingFilter): Promise<DailyMoneyRow[]>;
+  sumIncomeByDayAndPlatform(filter: SpendingFilter): Promise<DailyPlatformIncomeRow[]>;
 }
 
 export interface IPendingConversationRepository {

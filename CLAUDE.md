@@ -93,12 +93,12 @@ Persist a settled expense + 1-line confirmation
 ```
 <free text>            → record an expense, or ask a spending question
 /status                → current week (Mon–Sun): income by platform, expenses, profit, R$/h, R$/km, per-ride metrics, best day
-/dashboard             → personal signed HTML URL: chart by category (drill-down to subcategory), filter by month/day/range
+/dashboard             → personal signed HTML URL: weekly panel (‹ › navigation) + Mês tab — profit/income/expenses, earnings per day stacked by platform, productivity, category chart with drill-down
 /cancelar              → abandon an in-progress draft
 /help                  → help
 ```
 
-**`/dashboard`** is served by the Worker itself: `GET /dashboard?u=&t=` returns a self-contained HTML page (Chart.js via CDN) that fetches `GET /api/report?u=&t=&from=&to=&group_by=`. The token is an HMAC-SHA256 of the user id signed with the `DASHBOARD_SECRET` secret; the origin is derived from the incoming webhook request. Code in `src/services/dashboard/` (`token.ts`, `page.ts`, `handler.ts`).
+**`/dashboard`** is served by the Worker itself: `GET /dashboard?u=&t=` returns a self-contained HTML page (Chart.js via CDN, Inter via Google Fonts, design tokens as CSS variables, dark theme by default) that fetches `GET /api/report?u=&t=&week=YYYY-MM-DD` or `&month=YYYY-MM` — the period package built by `DashboardReportService` (`report.service.ts`). The token is an HMAC-SHA256 of the user id signed with the `DASHBOARD_SECRET` secret; the origin is derived from the incoming webhook request. Code in `src/services/dashboard/` (`token.ts`, `page.ts`, `handler.ts`).
 
 ## Roadmap (4-week MVP)
 

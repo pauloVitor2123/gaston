@@ -5,6 +5,7 @@ import { categories, platforms, transactions } from "@/db/schema";
 import type {
   CategorySubSpendingRow,
   DailyMoneyRow,
+  DailyPlatformIncomeRow,
   ISpendingRepository,
   LabeledAmountRow,
   SpendingFilter,
@@ -52,6 +53,16 @@ export class SpendingRepository implements ISpendingRepository {
       .where(scope(filter, "in"))
       .groupBy(platforms.id);
     return rows.map((r) => ({ label: r.label, amountCents: r.amountCents }));
+  }
+
+  async sumIncomeByDayAndPlatform(filter: SpendingFilter): Promise<DailyPlatformIncomeRow[]> {
+    const rows = await this.db
+      .select({ date: transactions.dueDate, label: platforms.name, amountCents: amount() })
+      .from(transactions)
+      .leftJoin(platforms, eq(transactions.platformId, platforms.id))
+      .where(scope(filter, "in"))
+      .groupBy(transactions.dueDate, platforms.id);
+    return rows.map((r) => ({ date: r.date, label: r.label, amountCents: r.amountCents }));
   }
 
   async sumByDay(filter: SpendingFilter): Promise<DailyMoneyRow[]> {

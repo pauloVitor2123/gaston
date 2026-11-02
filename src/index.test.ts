@@ -16,7 +16,7 @@ describe("worker fetch", () => {
     const res = await SELF.fetch(`https://gaston.test/dashboard?u=1&t=${token}`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("Painel de gastos");
+    expect(await res.text()).toContain("Ganho por dia");
   });
 
   it("GET /dashboard with a bad token is forbidden", async () => {
@@ -34,15 +34,24 @@ describe("worker fetch", () => {
   it("GET /api/report with a valid token returns a JSON report", async () => {
     const token = await signToken(2, SECRET, new Date());
     const res = await SELF.fetch(
-      `https://gaston.test/api/report?u=2&t=${token}&group_by=category&from=2026-08-01&to=2026-08-31`,
+      `https://gaston.test/api/report?u=2&t=${token}&week=2026-10-29`,
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ rows: [], totalCents: 0 });
+    const report = await res.json<{ start: string; profitCents: number; days: unknown[] }>();
+    expect(report.start).toBe("2026-10-26");
+    expect(report.profitCents).toBe(0);
+    expect(report.days).toHaveLength(7);
+  });
+
+  it("GET /api/report without a period is a bad request", async () => {
+    const token = await signToken(2, SECRET, new Date());
+    const res = await SELF.fetch(`https://gaston.test/api/report?u=2&t=${token}`);
+    expect(res.status).toBe(400);
   });
 
   it("GET /api/report with a bad token is forbidden", async () => {
     const res = await SELF.fetch(
-      "https://gaston.test/api/report?u=2&t=nope&group_by=category&from=2026-08-01&to=2026-08-31",
+      "https://gaston.test/api/report?u=2&t=nope&week=2026-10-29",
     );
     expect(res.status).toBe(403);
   });

@@ -1,14 +1,14 @@
 import { addDaysUtc, formatDayMonth } from "@/services/dates";
 import { formatReais } from "@/services/money";
-import type { WeekSummary, WorkLogEntry } from "@/services/metrics/weekly-summary";
+import type { PeriodSummary, WorkLogEntry } from "@/services/metrics/weekly-summary";
 
 const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
 const WORK_LOG_HINT =
   'Pra ver R$/hora e R$/km, me conte sua jornada: "rodei 200km, 9h online, 18 corridas".';
 
-export function formatWeekSummary(summary: WeekSummary): string {
-  const header = `📊 Semana ${weekRange(summary.weekStart)}`;
+export function formatWeekSummary(summary: PeriodSummary): string {
+  const header = `📊 Semana ${weekRange(summary.start)}`;
   const hasEffort = summary.effortSource !== "none";
   if (summary.incomeCents === 0 && summary.expenseCents === 0 && !hasEffort) {
     return `${header}\n\nNada registrado nesta semana ainda.`;

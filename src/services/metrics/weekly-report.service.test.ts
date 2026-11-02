@@ -22,7 +22,7 @@ describe("WeeklyReportService.summarize", () => {
     const window = { userId: 1, from: parseUtcDate("2026-10-26"), to: parseUtcDate("2026-11-02") };
     expect(spendingRepo.sumByDay).toHaveBeenCalledWith(window);
     expect(workLogRepo.listActive).toHaveBeenCalledWith(1, window.from, window.to);
-    expect(summary.weekStart).toEqual(window.from);
+    expect(summary.start).toEqual(window.from);
     expect(summary.incomeByPlatform).toEqual([{ label: "Sem plataforma", amountCents: 30000 }]);
     expect(summary.grossPerHourCents).toBe(6000);
   });
