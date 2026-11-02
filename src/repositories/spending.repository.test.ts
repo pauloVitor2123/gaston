@@ -3,7 +3,6 @@ import { drizzle } from "drizzle-orm/d1";
 import { describe, expect, it } from "vitest";
 import type { NewTransaction } from "@/db/schema";
 import { CategoryRepository } from "./category.repository";
-import { MantraRepository } from "./mantra.repository";
 import { SpendingRepository } from "./spending.repository";
 import { TransactionRepository } from "./transaction.repository";
 import { UserRepository } from "./user.repository";
@@ -29,18 +28,12 @@ async function setup(chatId: number) {
     synonyms: [],
     parentId: transporte.id,
   });
-  const mantra = await new MantraRepository(db).create({
-    userId: user.id,
-    name: "Pagas as Contas",
-    targetPercent: 45,
-  });
   const base: Omit<NewTransaction, "description" | "accrualDate" | "dueDate"> = {
     userId: user.id,
     direction: "out",
     expectedAmountCents: 1000,
     paymentMethod: "cash",
     categoryId: alimentacao.id,
-    mantraId: mantra.id,
   };
   return {
     txRepo: new TransactionRepository(db),
@@ -90,17 +83,6 @@ describe("SpendingRepository", () => {
     expect(byKey[key("Transporte", null)]).toBe(32000);
     expect(byKey[key("Transporte", "Combustível")]).toBe(20000);
     expect(rows).toHaveLength(3);
-  });
-
-  it("sumByMantra groups spending by mantra", async () => {
-    const { txRepo, repo, userId, base } = await setup(5005);
-    const d = new Date("2026-08-05");
-    await txRepo.create({ ...base, description: "a", expectedAmountCents: 1000, accrualDate: d, dueDate: d });
-    await txRepo.create({ ...base, description: "b", expectedAmountCents: 2500, accrualDate: d, dueDate: d });
-
-    const rows = await repo.sumByMantra({ userId, ...AUG });
-    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.amountCents]));
-    expect(byLabel["Pagas as Contas"]).toBe(3500);
   });
 
   it("sumTotal returns the summed amount for the range", async () => {

@@ -26,18 +26,27 @@ export function matchCategory(
 }
 
 export function inferCategory(description: string, categories: Category[]): Category | null {
+  return mostSpecificMatch(description, categories)?.category ?? null;
+}
+
+type TermMatch = { category: Category; length: number };
+
+function mostSpecificMatch(description: string, categories: Category[]): TermMatch | null {
   const tokens = new Set(tokenize(description));
   const lower = normalize(description);
+  let best: TermMatch | null = null;
   for (const category of categories) {
     for (const term of [category.name, ...category.synonyms]) {
       const normalized = term.toLowerCase();
       const matched = normalized.includes(" ")
         ? lower.includes(normalized)
         : tokens.has(normalized);
-      if (matched) return category;
+      if (matched && (!best || normalized.length > best.length)) {
+        best = { category, length: normalized.length };
+      }
     }
   }
-  return null;
+  return best;
 }
 
 export function resolveCategory(
@@ -68,14 +77,20 @@ export function resolveCategoryTree(
   if (explicit) {
     return { category: explicit, subcategory: inferCategory(description, childrenOf(explicit, categories)) };
   }
+  let best: { resolution: CategoryResolution; length: number } | null = null;
   for (const category of topLevel) {
-    const subcategory = inferCategory(description, childrenOf(category, categories));
-    if (subcategory) return { category, subcategory };
+    const sub = mostSpecificMatch(description, childrenOf(category, categories));
+    if (sub && (!best || sub.length > best.length)) {
+      best = { resolution: { category, subcategory: sub.category }, length: sub.length };
+    }
   }
   for (const category of topLevel) {
-    if (inferCategory(description, [category])) return { category, subcategory: null };
+    const own = mostSpecificMatch(description, [category]);
+    if (own && (!best || own.length > best.length)) {
+      best = { resolution: { category, subcategory: null }, length: own.length };
+    }
   }
-  return null;
+  return best?.resolution ?? null;
 }
 
 export type SubcategoryMatch =

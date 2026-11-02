@@ -116,6 +116,35 @@ describe("resolveCategoryTree", () => {
     expect(result?.category.name).toBe("Transporte");
     expect(result?.subcategory?.name).toBe("App");
   });
+
+  describe("most specific term wins across the tree", () => {
+    const manutencao = subcategory(22, "Manutenção", 2, ["manutenção", "mecânico"]);
+    const gnv = subcategory(23, "Combustível", 2, ["gnv", "gás"]);
+    const moradia = category(3, "Moradia", ["aluguel", "manutenção da casa", "botijão"]);
+    const driverTree: Category[] = [transporte, manutencao, gnv, moradia, category(4, "Outros")];
+
+    it("resolves a bare ambiguous term to the vehicle subcategory", () => {
+      const result = resolveCategoryTree(undefined, "manutenção 400", driverTree);
+      expect(result?.category.name).toBe("Transporte");
+      expect(result?.subcategory?.name).toBe("Manutenção");
+    });
+
+    it("prefers a longer top-level phrase over a shorter subcategory term", () => {
+      const result = resolveCategoryTree(undefined, "manutenção da casa 200", driverTree);
+      expect(result?.category.name).toBe("Moradia");
+      expect(result?.subcategory).toBeNull();
+    });
+
+    it("prefers the longer top-level term when both appear in the text", () => {
+      const result = resolveCategoryTree(undefined, "botijão de gás 120", driverTree);
+      expect(result?.category.name).toBe("Moradia");
+    });
+
+    it("keeps a bare 'gás' as vehicle fuel", () => {
+      const result = resolveCategoryTree(undefined, "gás 80", driverTree);
+      expect(result?.subcategory?.name).toBe("Combustível");
+    });
+  });
 });
 
 describe("canonicalizeSubcategory", () => {

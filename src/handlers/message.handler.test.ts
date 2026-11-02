@@ -127,7 +127,8 @@ describe("MessageHandler — record flow", () => {
     });
     expect(reply.text).toContain("Almoço — R$ 35,00");
     expect(reply.text).toContain("📁 Alimentação");
-    expect(reply.text).toContain("🎯 Pagas as Contas");
+    expect(reply.text).not.toContain("Pagas as Contas");
+    expect(reply.text).not.toContain("🎯");
   });
 
   it("resolves the subcategory from the description and shows it in the confirmation", async () => {

@@ -11,7 +11,7 @@ INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Saúde',       '["farmácia","remédio","médico","consulta"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Lazer',       '["cinema","bar","streaming","jogo"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Educação',    '["curso","livro","faculdade"]'),
-  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Moradia',     '["aluguel","condomínio","luz","água","internet","ferramenta","manutenção","reparo","trena"]'),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Moradia',     '["aluguel","condomínio","luz","água","internet","trena","botijão","manutenção da casa","reparo em casa","ferramenta de casa"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Serviços',    '["assinatura","academia"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Vestuário',   '["roupa","meia","camisa","calça","tênis","sapato","calçado"]'),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Cuidados Pessoais', '["barbearia","cabeleireiro","salão","cosméticos","higiene","perfume"]'),
@@ -22,12 +22,35 @@ INSERT OR IGNORE INTO categories (user_id, name, synonyms) VALUES
 INSERT OR IGNORE INTO categories (user_id, name, synonyms, parent_id) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'App',         '["uber","99","ônibus","táxi","metrô","transporte público"]',
     (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
-  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Combustível', '["gasolina","gnv","álcool","etanol","combustível","abastecer","posto"]',
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Combustível', '["gasolina","etanol","álcool","gnv","gás","diesel","eletricidade","recarga elétrica","recarga do carro","combustível","abastecer","abasteci","posto"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Manutenção',  '["manutenção","mecânico","revisão","troca de óleo","pneu","freio","oficina","peça","alinhamento","balanceamento"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Lavagem',     '["lavagem","lava jato","lavajato","lava rápido","higienização"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pedágio',     '["pedágio","sem parar","tag"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Estacionamento', '["estacionamento","zona azul","flanelinha"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Aluguel do carro', '["aluguel do carro","locadora","kovi","localiza","movida"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Seguro',      '["seguro","franquia"]',
+    (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
+  ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Documentação', '["ipva","licenciamento","multa","detran"]',
     (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL)),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Mercado',     '["mercado","supermercado","feira","hortifruti"]',
     (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Alimentação' AND parent_id IS NULL)),
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Restaurante', '["restaurante","lanche","almoço","ifood","bar","padaria"]',
     (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Alimentação' AND parent_id IS NULL));
+
+UPDATE categories
+SET synonyms = '["aluguel","condomínio","luz","água","internet","trena","botijão","manutenção da casa","reparo em casa","ferramenta de casa"]'
+WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Moradia' AND parent_id IS NULL;
+
+UPDATE categories
+SET synonyms = '["gasolina","etanol","álcool","gnv","gás","diesel","eletricidade","recarga elétrica","recarga do carro","combustível","abastecer","abasteci","posto"]'
+WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Combustível'
+  AND parent_id = (SELECT id FROM categories WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = 6069762694) AND name = 'Transporte' AND parent_id IS NULL);
 
 INSERT OR IGNORE INTO mantras (user_id, name, target_percent) VALUES
   ((SELECT id FROM users WHERE telegram_chat_id = 6069762694), 'Pagas as Contas', 0.45),

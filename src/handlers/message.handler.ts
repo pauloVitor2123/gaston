@@ -340,7 +340,6 @@ export class MessageHandler {
         : input.category_name;
       meta.push(`📁 ${label}`);
     }
-    if (input.mantra) meta.push(`🎯 ${input.mantra}`);
     return `✅ ${description} — ${amount}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
   }
 }

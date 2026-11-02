@@ -2,7 +2,6 @@ import type {
   CategorySubSpendingRow,
   ISpendingRepository,
   SpendingFilter,
-  SpendingRow,
 } from "@/types/repository";
 import type { QuerySpendingArgs, SpendingGroupBy } from "@/services/analytics/query";
 import { addDaysUtc, parseUtcDate } from "@/services/dates";
@@ -20,7 +19,6 @@ export interface SpendingReport {
 
 const UNLABELED: Record<SpendingGroupBy, string> = {
   category: "Sem categoria",
-  mantra: "Sem mantra",
   none: "Total",
 };
 
@@ -39,15 +37,13 @@ export class AnalyticsService {
     const rows =
       params.group_by === "category"
         ? this.categoryTree(await this.spendingRepo.sumByCategoryTree(filter))
-        : this.flatRows(await this.flatRowsFor(params.group_by, filter), params.group_by);
+        : this.totalRow(await this.spendingRepo.sumTotal(filter));
     const totalCents = rows.reduce((sum, row) => sum + row.amountCents, 0);
     return { rows, totalCents };
   }
 
-  private flatRows(rows: SpendingRow[], groupBy: SpendingGroupBy): SpendingBreakdownRow[] {
-    return rows
-      .map((row) => ({ label: row.label ?? UNLABELED[groupBy], amountCents: row.amountCents }))
-      .sort((a, b) => b.amountCents - a.amountCents);
+  private totalRow(totalCents: number): SpendingBreakdownRow[] {
+    return totalCents > 0 ? [{ label: UNLABELED.none, amountCents: totalCents }] : [];
   }
 
   private categoryTree(rows: CategorySubSpendingRow[]): SpendingBreakdownRow[] {
@@ -71,13 +67,5 @@ export class AnalyticsService {
           : { label, amountCents },
       )
       .sort((a, b) => b.amountCents - a.amountCents);
-  }
-
-  private async flatRowsFor(groupBy: "none" | "mantra", filter: SpendingFilter): Promise<SpendingRow[]> {
-    if (groupBy === "none") {
-      const total = await this.spendingRepo.sumTotal(filter);
-      return total > 0 ? [{ label: null, amountCents: total }] : [];
-    }
-    return this.spendingRepo.sumByMantra(filter);
   }
 }

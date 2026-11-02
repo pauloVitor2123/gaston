@@ -34,11 +34,6 @@ export interface SpendingFilter {
   to: Date;
 }
 
-export interface SpendingRow {
-  label: string | null;
-  amountCents: number;
-}
-
 export interface CategorySubSpendingRow {
   categoryLabel: string | null;
   subcategoryLabel: string | null;
@@ -52,7 +47,6 @@ export interface ITransactionRepository {
 export interface ISpendingRepository {
   sumTotal(filter: SpendingFilter): Promise<number>;
   sumByCategoryTree(filter: SpendingFilter): Promise<CategorySubSpendingRow[]>;
-  sumByMantra(filter: SpendingFilter): Promise<SpendingRow[]>;
 }
 
 export interface IPendingConversationRepository {

@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Finanças do PV** (Gaston) is a **simple expense registrar** for Telegram: the user writes an expense in natural language and the bot extracts value + description, assigns a category (and a mantra), and records it. Single user, near-zero infrastructure cost.
+**Finanças do PV** (Gaston) is a Telegram **cashbook for an app driver** (Uber/99): the user writes in natural language and the bot records expenses, and — as the pivot lands — income per platform and work logs (km, online time, rides), then measures productivity per week. Single user, near-zero infrastructure cost.
 
-Core value: instead of forms or spreadsheets, the user writes freely ("gastei 20 na padaria", "uber 10") and the bot records it, then reports where the money went (`/status` and an HTML `/dashboard`).
+> **Pivot in progress (2026-11-02):** see [ADR-005](./docs/adr/ADR-005-pivo-motorista.md), the 5-PR plan in [`docs/plano-pivo-motorista.md`](./docs/plano-pivo-motorista.md) and the vocabulary in [`CONTEXT.md`](./CONTEXT.md). Work and personal expenses share one bucket (profit = income − all expenses). The **mantra is still inferred and stored but never shown** to the user (no dashboard, message or agent answer mentions it).
+
+Core value: instead of forms or spreadsheets, the user writes freely ("gastei 90 de gnv", "uber 10") and the bot records it, then reports where the money went (`/status` and an HTML `/dashboard`).
 
 > **Scope note (2026-08-17 simplification):** the app was deliberately cut back to a pure expense registrar. **No credit card, no invoices, no installments, no recurring bills, no payments/undo, no balance, no income.** Those features are not deleted — they are **parked in `src/_parked/`** (excluded from `tsconfig` and `vitest`), ready to revive. Do not wire parked code back into the live path without an explicit decision. The Drizzle schema is kept whole; the extra tables/columns are simply dormant (no migration was run).
 
@@ -65,13 +67,13 @@ User message (+ prior draft thread, if any)
   ↓
 CollectionAgent → LLM with record_transaction + query_spending tools (zod-derived JSON schema):
   • record_transaction → validated by zod (value + description required)
-  • query_spending     → aggregate over a period (by category / mantra / total)
+  • query_spending     → aggregate over a period (by category tree / total)
   • text reply         → a clarifying question (required field still missing)
   ↓
 On record_transaction, code disposes (deterministic):
   • date defaults to today
   • category resolved from the DB list; unresolved + list non-empty → ask which category
-  • mantra inferred by rule (~95% covered)
+  • mantra inferred by rule (stored only — never shown to the user)
   ↓
 On question: save/refresh draft in pending_conversations (TTL 24h), reply the question.
   Cycle cap (3) never aborts — it pauses and keeps the draft alive for the next message.
@@ -91,7 +93,7 @@ Persist a settled expense + 1-line confirmation
 ```
 <free text>            → record an expense, or ask a spending question
 /status                → current civil-month spending total + breakdown by category
-/dashboard             → personal signed HTML URL: charts by category & mantra, filter by month/day/range
+/dashboard             → personal signed HTML URL: chart by category (drill-down to subcategory), filter by month/day/range
 /cancelar              → abandon an in-progress draft
 /help                  → help
 ```
@@ -117,7 +119,7 @@ Persist a settled expense + 1-line confirmation
 - **Stand-by convention**: unused features live under `src/_parked/` (mirrors `src/` structure), excluded from `tsconfig.json` and `vitest.config.ts` (`test.exclude`). They are not compiled, bundled, or tested. To revive one, move it back and re-wire the composition root.
 - **Architecture**: constructor injection; specific repositories (service coordinates multi-repo); tests colocated (`x.ts` + `x.test.ts`).
 - **Workflow**: feature branch → PR → merge. CI (unit, no secrets/mocks) on PR; CD (integration + `wrangler deploy`) on merge to main. `/code-review` run locally before PRs (not in CI — public repo, no Anthropic key).
-- **Active plan**: `C:\Users\opera\.claude\plans\peaceful-snacking-hejlsberg.md`
+- **Active plan**: [`docs/plano-pivo-motorista.md`](./docs/plano-pivo-motorista.md) — pivot to app-driver cashbook ([ADR-005](./docs/adr/ADR-005-pivo-motorista.md))
 
 ## Coding Conventions (code-review enforces these)
 

@@ -17,7 +17,6 @@ export function renderDashboardHtml(): string {
   button { cursor: pointer; font-weight: 600; }
   .total { font-size: 1.6rem; font-weight: 700; margin: 8px 0 20px; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
-  @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
   .card { border: 1px solid #8883; border-radius: 12px; padding: 16px; }
   .card h2 { font-size: 1rem; margin: 0 0 12px; }
   table { width: 100%; border-collapse: collapse; font-size: .9rem; }
@@ -52,11 +51,6 @@ export function renderDashboardHtml(): string {
       <h2>Por categoria <button id="cat-back" style="display:none; float:right; padding:2px 10px;">← voltar</button></h2>
       <canvas id="chart-category"></canvas>
       <table id="table-category"></table>
-    </div>
-    <div class="card">
-      <h2>Por mantra</h2>
-      <canvas id="chart-mantra"></canvas>
-      <table id="table-mantra"></table>
     </div>
   </div>
 
@@ -173,23 +167,20 @@ export function renderDashboardHtml(): string {
     el("total").textContent = brl(0);
     categoryReport = null;
     el("cat-back").style.display = "none";
-    ["table-category", "table-mantra"].forEach(function (id) { el(id).innerHTML = "<tr><td class='empty'>Nada nesse período.</td></tr>"; });
-    ["chart-category", "chart-mantra"].forEach(function (id) { if (charts[id]) charts[id].destroy(); });
+    el("table-category").innerHTML = "<tr><td class='empty'>Nada nesse período.</td></tr>";
+    if (charts["chart-category"]) charts["chart-category"].destroy();
   }
 
   function load() {
     var range = currentRange();
     if (!range) return;
     el("range-label").textContent = range.from === range.to ? range.from : (range.from + " → " + range.to);
-    Promise.all([fetchReport("category", range), fetchReport("mantra", range)])
-      .then(function (res) {
-        var byCategory = res[0]; var byMantra = res[1];
+    fetchReport("category", range)
+      .then(function (byCategory) {
         el("total").textContent = brl(byCategory.totalCents);
         if (!byCategory.totalCents) { renderEmpty(); return; }
         categoryReport = byCategory;
         renderCategory(null);
-        renderChart("chart-mantra", byMantra);
-        renderTable("table-mantra", byMantra);
       })
       .catch(function () { el("total").textContent = "Erro ao carregar."; });
   }

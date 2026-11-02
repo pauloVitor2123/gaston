@@ -10,7 +10,6 @@ function makeRepo(overrides: Partial<ISpendingRepository> = {}): ISpendingReposi
   return {
     sumTotal: vi.fn(async () => 0),
     sumByCategoryTree: vi.fn(async () => []),
-    sumByMantra: vi.fn(async () => []),
     ...overrides,
   };
 }
